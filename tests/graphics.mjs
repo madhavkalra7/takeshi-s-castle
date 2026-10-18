@@ -124,6 +124,83 @@ try {
       "FPP cannot see opponents through closed room walls",
     );
     assert.equal(result.normalDepth, true);
+    const doors = await page.evaluate(() => {
+      const h = window.harness,
+        { scene, game, Raycaster, Vector2 } = h;
+      const matrices = scene.doorPanels.instanceMatrix.array;
+      const transforms = h.ARENA.doors.every((d, index) => {
+        const alongX = d.w > d.d;
+        return [-1, 1].every((sign, leaf) => {
+          const start = (index * 2 + leaf) * 16;
+          return (
+            Array.from(matrices.slice(start, start + 16)).every(
+              Number.isFinite,
+            ) &&
+            Math.abs(matrices[start + 12] - d.x - (alongX ? sign * 0.425 : 0)) <
+              0.00001 &&
+            Math.abs(matrices[start + 13] - 1.325) < 0.00001 &&
+            Math.abs(matrices[start + 14] - d.z - (alongX ? 0 : sign * 0.425)) <
+              0.00001
+          );
+        });
+      });
+      const visible = (o) => {
+        for (let p = o; p; p = p.parent) if (!p.visible) return false;
+        return true;
+      };
+      const hits = [true, false].map((alongX) => {
+        const d = h.ARENA.doors.find((d) => d.w > d.d === alongX);
+        Object.assign(game.players[0], {
+          x: d.x + (alongX ? 0.425 : -1.5),
+          z: d.z + (alongX ? 1.5 : 0.425),
+          y: 0,
+        });
+        scene.setMode("runner");
+        scene.yaw = alongX ? 0 : -Math.PI / 2;
+        scene.pitch = 0;
+        h.render(0);
+        scene.scene.updateMatrixWorld(true);
+        const ray = new Raycaster();
+        ray.setFromCamera(new Vector2(0, 0), scene.camera);
+        const hit = ray
+          .intersectObjects(scene.world.children, true)
+          .find((h) => visible(h.object));
+        return (
+          hit?.object === scene.doorPanels &&
+          hit.instanceId === h.ARENA.doors.indexOf(d) * 2 + 1
+        );
+      });
+      const d = h.ARENA.doors[0],
+        before = Array.from(matrices);
+      game.devices[d.id] = { ...game.devices[d.id], openUntil: 5.5 };
+      for (let i = 0; i < 60; i++) h.render(0);
+      const axis = d.w > d.d ? 12 : 14;
+      const opens =
+        Math.abs(matrices[axis] - before[axis] + 0.85) < 0.00001 &&
+        Math.abs(matrices[16 + axis] - before[16 + axis] - 0.85) < 0.00001;
+      const isolated = Array.from(matrices.slice(32)).every(
+        (v, i) => v === before[32 + i],
+      );
+      game.devices[d.id].openUntil = 0;
+      for (let i = 0; i < 60; i++) h.render(0);
+      return { transforms, hits, opens, isolated };
+    });
+    assert.equal(
+      doors.transforms,
+      true,
+      "every door leaf has a finite world transform at its doorway",
+    );
+    assert.deepEqual(
+      doors.hits,
+      [true, true],
+      "FPP sees the rendered door leaves in both wall orientations",
+    );
+    assert.equal(doors.opens, true, "opening moves both rendered leaves apart");
+    assert.equal(
+      doors.isolated,
+      true,
+      "opening one door does not move another door",
+    );
     const picked = await page.evaluate(() => {
       const h = window.harness,
         s = h.scene;

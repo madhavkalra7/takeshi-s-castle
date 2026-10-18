@@ -386,7 +386,16 @@ export class ArenaScene {
         d.z,
         doorLightMaterial,
       );
-      this.devices.set(d.id, { group, panels, alongX, type: "door", slide: 0 });
+      this.devices.set(d.id, {
+        group,
+        panels,
+        alongX,
+        type: "door",
+        slide: 0,
+        panelIndex: doorIndex++ * 2,
+        x: d.x,
+        z: d.z,
+      });
       this.writeDoorPanels(this.devices.get(d.id));
       group.traverse((o) => {
         if (o.isMesh) {
