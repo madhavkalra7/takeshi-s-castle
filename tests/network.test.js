@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { io } from "socket.io-client";
+import { ARENA } from "../shared/game.js";
 const port = 3187,
   url = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath, ["server/index.js"], {
@@ -83,6 +84,21 @@ test(
       );
       assert.ok((await ack(clients[1], "action", "g0")).ok);
       const initial = state.players[0];
+      const nearbyDoor = ARENA.doors.find(
+        (d) => Math.hypot(d.x - initial.x, d.z - initial.z) < 2.4,
+      );
+      assert.ok(nearbyDoor);
+      assert.ok((await ack(clients[0], "door", nearbyDoor.id)).ok);
+      assert.match(
+        (await ack(clients[1], "door", nearbyDoor.id)).error,
+        /runners/,
+      );
+      const opened = await until(
+        clients[0],
+        "state",
+        (s) => (s.devices[nearbyDoor.id]?.openUntil || 0) > s.serverTime,
+      );
+      assert.ok(opened.devices[nearbyDoor.id].openUntil > opened.serverTime);
       clients[0].emit("input", { x: 10000, z: 0 });
       await new Promise((r) => setTimeout(r, 160));
       clients[0].emit("input", { x: 0, z: 0 });

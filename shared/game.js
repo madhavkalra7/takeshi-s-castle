@@ -1,14 +1,15 @@
-export const CELL = 3.4,
-  SIZE = 9,
+export const CELL = 4.4,
+  SIZE = 11,
   HALF = (CELL * SIZE) / 2,
-  RADIUS = 0.38;
-export const ROUND_SECONDS = 90;
+  RADIUS = 0.38,
+  MID = (SIZE - 1) / 2;
+export const ROUND_SECONDS = 180;
 export const TEAM_NAMES = ["TIDAL", "EMBER"];
-export const COST = { rotate: 30, gate: 35, bumper: 40 };
-export const COOLDOWN = { rotate: 5, gate: 7, bumper: 6 };
+export const COST = { rotate: 30, gate: 35, bumper: 40, door: 18 };
+export const COOLDOWN = { rotate: 5, gate: 7, bumper: 6, door: 5 };
 export const center = (row, col) => ({
-  x: (col - 4) * CELL,
-  z: (row - 4) * CELL,
+  x: (col - MID) * CELL,
+  z: (row - MID) * CELL,
 });
 const edgeKey = (a, b) => [a, b].sort((x, y) => x - y).join("-");
 export const roleFor = (slot, round = 1) =>
@@ -21,7 +22,7 @@ export function createArena() {
     return seed / 4294967296;
   };
   const passages = new Set(),
-    visited = new Set([0]),
+    seen = new Set([0]),
     stack = [0];
   while (stack.length) {
     const a = stack.at(-1),
@@ -33,35 +34,32 @@ export function createArena() {
       [r, c - 1],
       [r, c + 1],
     ]
-      .filter(([r, c]) => r >= 0 && r < SIZE && c >= 0 && c <= 4)
+      .filter(([r, c]) => r >= 0 && r < SIZE && c >= 0 && c <= MID)
       .map(([r, c]) => r * SIZE + c)
-      .filter((b) => !visited.has(b));
+      .filter((b) => !seen.has(b));
     if (!next.length) {
       stack.pop();
       continue;
     }
     const b = next[Math.floor(random() * next.length)];
     passages.add(edgeKey(a, b));
-    visited.add(b);
+    seen.add(b);
     stack.push(b);
   }
-  // Extra loops prevent a single temporary gate from deciding a match.
   for (let r = 0; r < SIZE; r++)
-    for (let c = 0; c < SIZE; c++)
+    for (let c = 0; c <= MID; c++)
       for (const [dr, dc] of [
         [0, 1],
         [1, 0],
-      ]) {
-        if (c <= 4 && r + dr < SIZE && c + dc <= 4 && random() < 0.22)
+      ])
+        if (r + dr < SIZE && c + dc <= MID && random() < 0.07)
           passages.add(edgeKey(r * SIZE + c, (r + dr) * SIZE + c + dc));
-      }
   const pivots = [
-    [2, 2],
-    [2, 6],
-    [6, 2],
-    [6, 6],
+    [3, 3],
+    [3, SIZE - 3],
+    [SIZE - 3, 3],
+    [SIZE - 3, SIZE - 3],
   ];
-  // Open all four connections around each rotating junction.
   for (const [r, c] of pivots)
     for (const [a, b] of [
       [
@@ -82,10 +80,9 @@ export function createArena() {
       ],
     ])
       passages.add(edgeKey(a[0] * SIZE + a[1], b[0] * SIZE + b[1]));
-  // Mirror the left half so both teams travel the same distance to their key.
+  const mirror = (n) => Math.floor(n / SIZE) * SIZE + SIZE - 1 - (n % SIZE);
   for (const edge of [...passages]) {
     const [a, b] = edge.split("-").map(Number);
-    const mirror = (n) => Math.floor(n / SIZE) * SIZE + (SIZE - 1 - (n % SIZE));
     passages.add(edgeKey(mirror(a), mirror(b)));
   }
   const walls = [],
@@ -98,61 +95,106 @@ export function createArena() {
       ]) {
         if (r + dr >= SIZE || c + dc >= SIZE) continue;
         const a = center(r, c),
-          b = center(r + dr, c + dc);
-        const wall = {
-          x: (a.x + b.x) / 2,
-          z: (a.z + b.z) / 2,
-          w: dc ? 0.26 : CELL + 0.26,
-          d: dr ? 0.26 : CELL + 0.26,
-          height: 2.4,
-        };
+          b = center(r + dr, c + dc),
+          wall = {
+            x: (a.x + b.x) / 2,
+            z: (a.z + b.z) / 2,
+            w: dc ? 0.26 : CELL + 0.26,
+            d: dr ? 0.26 : CELL + 0.26,
+            height: 3.2,
+          };
         if (!passages.has(edgeKey(r * SIZE + c, (r + dr) * SIZE + c + dc)))
           walls.push(wall);
         else if (
           !pivots.some(
             ([pr, pc]) =>
               Math.hypot(
-                wall.x - (pc - 4.5) * CELL,
-                wall.z - (pr - 4.5) * CELL,
-              ) < CELL,
+                wall.x - (pc - MID - 0.5) * CELL,
+                wall.z - (pr - MID - 0.5) * CELL,
+              ) <
+              CELL * 1.05,
           )
         )
           candidates.push(wall);
       }
-  const left = candidates.filter((w) => w.x < -0.2);
-  const gateBases = [
-    left[Math.floor(left.length * 0.3)],
-    left[Math.floor(left.length * 0.7)],
-  ];
-  const gates = gateBases
+  const left = candidates.filter((w) => w.x < -0.2),
+    bases = [
+      left[Math.floor(left.length * 0.3)],
+      left[Math.floor(left.length * 0.7)],
+    ];
+  const gates = bases
     .flatMap((w) => [w, { ...w, x: -w.x }])
-    .map((w, i) => ({ ...w, id: `g${i}`, type: "gate", height: 2.4 }));
+    .map((w, i) => ({ ...w, id: `g${i}`, type: "gate" }));
+  const doors = candidates
+    .filter((w) => !gates.some((g) => g.x === w.x && g.z === w.z))
+    .map((w, i) => {
+      const alongX = w.w > w.d,
+        opening = 1.7,
+        flank = (CELL - opening) / 2;
+      for (const sign of [-1, 1])
+        walls.push({
+          x: w.x + (alongX ? sign * (opening / 2 + flank / 2) : 0),
+          z: w.z + (alongX ? 0 : sign * (opening / 2 + flank / 2)),
+          w: alongX ? flank : 0.26,
+          d: alongX ? 0.26 : flank,
+          height: 3.2,
+        });
+      return {
+        ...w,
+        w: alongX ? opening : 0.22,
+        d: alongX ? 0.22 : opening,
+        id: `d${i}`,
+        type: "door",
+        height: 2.7,
+      };
+    });
   const rotators = pivots.map(([r, c], i) => ({
     id: `r${i}`,
     type: "rotate",
-    x: (c - 4.5) * CELL,
-    z: (r - 4.5) * CELL,
-    length: CELL * 1.75,
+    x: (c - MID - 0.5) * CELL,
+    z: (r - MID - 0.5) * CELL,
+    length: CELL * 0.75,
   }));
   const bumpers = [
-    [4, 4],
-    [4, 1],
-    [4, 7],
+    [MID, MID],
+    [MID, 1],
+    [MID, SIZE - 2],
   ].map(([r, c], i) => ({ ...center(r, c), id: `b${i}`, type: "bumper" }));
   return {
     walls,
+    doors,
     gates,
     rotators,
     bumpers,
-    keys: [center(0, 1), center(0, 7)],
-    exit: center(0, 4),
-    spawns: [center(8, 1), center(8, 7)],
+    keys: [center(0, 1), center(0, SIZE - 2)],
+    exit: center(0, MID),
+    spawns: [center(SIZE - 1, 1), center(SIZE - 1, SIZE - 2)],
   };
 }
 export const ARENA = createArena();
+export function doorIsOpen(game, id, now) {
+  const s = game.devices[id] || {};
+  return (s.openUntil || 0) > now && (s.lockedUntil || 0) <= now;
+}
+export function openDoor(game, slot, id, now) {
+  const p = game.players[slot],
+    d = ARENA.doors.find((d) => d.id === id);
+  if (game.phase !== "playing" || !p || p.role !== "runner")
+    return "Only runners can open nearby doors.";
+  if (!d || Math.hypot(p.x - d.x, p.z - d.z) > 2.4)
+    return "Move closer to the door.";
+  const s = game.devices[id] || {};
+  if ((s.lockedUntil || 0) > now)
+    return "Door locked. Wait a moment or find another route.";
+  game.devices[id] = { ...s, openUntil: now + 5.5 };
+  return null;
+}
 export function obstacles(game, now) {
   return [
     ...ARENA.walls,
+    ...ARENA.doors
+      .filter((d) => !doorIsOpen(game, d.id, now))
+      .map((d) => ({ ...d, doorId: d.id })),
     ...ARENA.gates
       .filter((g) => (game.devices[g.id]?.until || 0) > now)
       .map((g) => ({ ...g })),
@@ -248,9 +290,12 @@ export function action(game, slot, id, now) {
   const p = game.players[slot];
   if (game.phase !== "playing" || !p || p.role !== "controller")
     return "Only controllers can operate a live arena.";
-  const dev = [...ARENA.rotators, ...ARENA.gates, ...ARENA.bumpers].find(
-    (d) => d.id === id,
-  );
+  const dev = [
+    ...ARENA.rotators,
+    ...ARENA.gates,
+    ...ARENA.bumpers,
+    ...ARENA.doors,
+  ].find((d) => d.id === id);
   if (!dev) return "Unknown device.";
   const state = game.devices[id] || {};
   if ((state.cooldown || 0) > now) return "That device is recharging.";
@@ -267,7 +312,7 @@ export function action(game, slot, id, now) {
   game.pending.push({ id, at: now + 0.75, team: p.team });
   emit(
     game,
-    `${TEAM_NAMES[p.team]} armed ${dev.type === "rotate" ? "a rotating wall" : dev.type === "gate" ? "a gate" : "a bumper"}`,
+    `${TEAM_NAMES[p.team]} armed ${dev.type === "rotate" ? "a rotating wall" : dev.type === "gate" ? "a gate" : dev.type === "door" ? "a door lock" : "a bumper"}`,
     now,
   );
   return null;
@@ -309,9 +354,12 @@ export function tick(game, dt, now, members) {
   game.remaining = Math.max(0, game.deadline - now);
   game.energy = game.energy.map((e) => Math.min(100, e + dt * 9));
   for (const pending of game.pending.filter((a) => a.at <= now)) {
-    const dev = [...ARENA.rotators, ...ARENA.gates, ...ARENA.bumpers].find(
-        (d) => d.id === pending.id,
-      ),
+    const dev = [
+        ...ARENA.rotators,
+        ...ARENA.gates,
+        ...ARENA.bumpers,
+        ...ARENA.doors,
+      ].find((d) => d.id === pending.id),
       s = game.devices[dev.id];
     if (dev.type === "rotate") {
       // A rotation cannot sweep through or entomb a runner.
@@ -331,7 +379,7 @@ export function tick(game, dt, now, members) {
           now,
         );
       } else s.orientation = s.orientation ? 0 : 1;
-    } else if (dev.type === "gate") {
+    } else if (dev.type === "gate" || dev.type === "door") {
       if (
         game.players.some(
           (p) =>
@@ -340,14 +388,36 @@ export function tick(game, dt, now, members) {
       ) {
         game.energy[pending.team] = Math.min(
           100,
-          game.energy[pending.team] + COST.gate,
+          game.energy[pending.team] + COST[dev.type],
         );
         emit(game, "Gate blocked · energy refunded", now);
+      } else if (dev.type === "door") {
+        s.lockedUntil = now + 3;
+        s.openUntil = 0;
       } else s.until = now + 3;
     } else s.until = now + 1.2;
     s.warning = 0;
   }
   game.pending = game.pending.filter((a) => a.at > now);
+  for (const d of ARENA.doors) {
+    const s = game.devices[d.id];
+    if (
+      s &&
+      (s.openUntil || 0) > 0 &&
+      (s.lockedUntil || 0) <= now &&
+      game.players.some(
+        (p) => p.role === "runner" && intersects(p.x, p.z, d, RADIUS + 0.14),
+      )
+    )
+      s.openUntil = Math.max(s.openUntil, now + 0.25);
+  }
+  for (const p of game.players.filter((p) => p.bot && p.role === "runner"))
+    for (const d of ARENA.doors)
+      if (
+        Math.hypot(p.x - d.x, p.z - d.z) < 2.3 &&
+        !doorIsOpen(game, d.id, now)
+      )
+        openDoor(game, p.slot, d.id, now);
   const walls = obstacles(game, now),
     runners = game.players.filter((p) => p.role === "runner");
   for (const p of runners) {
@@ -412,9 +482,12 @@ export function tick(game, dt, now, members) {
   else if (game.remaining <= 0) finishRound(game, null, now);
   for (const p of game.players.filter((p) => p.bot && p.role === "controller"))
     if ((p.nextAction || 0) < now) {
-      const ids = [...ARENA.rotators, ...ARENA.gates, ...ARENA.bumpers].map(
-        (d) => d.id,
-      );
+      const ids = [
+        ...ARENA.rotators,
+        ...ARENA.gates,
+        ...ARENA.bumpers,
+        ...ARENA.doors,
+      ].map((d) => d.id);
       action(
         game,
         p.slot,
@@ -425,9 +498,10 @@ export function tick(game, dt, now, members) {
     }
 }
 export function findPath(from, target, walls) {
+  walls = walls.filter((w) => !w.doorId);
   const index = (p) =>
-    Math.max(0, Math.min(8, Math.round(p.z / CELL + 4))) * SIZE +
-    Math.max(0, Math.min(8, Math.round(p.x / CELL + 4)));
+    Math.max(0, Math.min(SIZE - 1, Math.round(p.z / CELL + MID))) * SIZE +
+    Math.max(0, Math.min(SIZE - 1, Math.round(p.x / CELL + MID)));
   const start = index(from),
     goal = index(target),
     q = [start],
@@ -465,6 +539,7 @@ export function findPath(from, target, walls) {
   return path.reverse();
 }
 function botInput(p, game, walls, now) {
+  walls = walls.filter((w) => !w.doorId);
   const target = p.key ? ARENA.exit : ARENA.keys[p.team];
   const changed = p.pathKey !== p.key;
   const blocked =

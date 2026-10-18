@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ARENA,
+  ROUND_SECONDS,
+  openDoor,
+  doorIsOpen,
   HALF,
   COST,
   createGame,
@@ -85,11 +88,20 @@ test("gates warn, close temporarily, and reopen", () => {
   const g = playing(),
     id = ARENA.gates[0].id;
   action(g, 1, id, 4);
-  assert.equal(obstacles(g, 4.5).length, ARENA.walls.length + 4);
+  assert.equal(
+    obstacles(g, 4.5).length,
+    ARENA.walls.length + ARENA.doors.length + 4,
+  );
   tick(g, 0.03, 4.8, members());
   assert.ok(g.devices[id].until > 7);
-  assert.equal(obstacles(g, 5).length, ARENA.walls.length + 5);
-  assert.equal(obstacles(g, 8).length, ARENA.walls.length + 4);
+  assert.equal(
+    obstacles(g, 5).length,
+    ARENA.walls.length + ARENA.doors.length + 5,
+  );
+  assert.equal(
+    obstacles(g, 8).length,
+    ARENA.walls.length + ARENA.doors.length + 4,
+  );
 });
 test("occupied gates and rotating walls refund energy rather than clipping players", () => {
   for (const device of [ARENA.gates[0], ARENA.rotators[0]]) {
@@ -138,7 +150,7 @@ test("simultaneous finishes and timeouts are draws", () => {
   assert.equal(g.roundWinner, null);
   assert.deepEqual(g.scores, [0, 0]);
   const timeout = playing();
-  tick(timeout, 0.03, 95, members());
+  tick(timeout, 0.03, ROUND_SECONDS + 5, members());
   assert.equal(timeout.phase, "roundOver");
   assert.equal(timeout.roundWinner, null);
 });
@@ -233,4 +245,52 @@ test("bumper hits grounded players while airborne players can dodge it", () => {
   assert.ok(g.players[0].stun > 4.8);
   assert.ok(g.players[0].vx > 0);
   assert.equal(g.players[2].stun, 0);
+});
+
+test("room doors start closed, require a nearby runner, and open a passable gap", () => {
+  const g = playing(),
+    d = ARENA.doors[0],
+    alongX = d.w > d.d;
+  assert.ok(ARENA.doors.length >= 100);
+  assert.equal(doorIsOpen(g, d.id, 4), false);
+  assert.match(openDoor(g, 1, d.id, 4), /runners/);
+  assert.match(openDoor(g, 0, d.id, 4), /closer/);
+  const p = g.players[0];
+  Object.assign(p, { x: d.x + (alongX ? 0 : -1), z: d.z + (alongX ? -1 : 0) });
+  const closed = { x: p.x, z: p.z };
+  move(closed, alongX ? 0 : 2, alongX ? 2 : 0, obstacles(g, 4));
+  assert.ok(Math.hypot(closed.x - d.x, closed.z - d.z) > 0.35);
+  assert.equal(openDoor(g, 0, d.id, 4), null);
+  assert.equal(doorIsOpen(g, d.id, 4), true);
+  move(p, alongX ? 0 : 2, alongX ? 2 : 0, obstacles(g, 4));
+  assert.ok(alongX ? p.z > d.z : p.x > d.x);
+});
+test("door auto-close never catches a runner in its frame, including delayed ticks", () => {
+  const g = playing(),
+    d = ARENA.doors[0],
+    p = g.players[0];
+  Object.assign(p, { x: d.x, z: d.z });
+  openDoor(g, 0, d.id, 4);
+  tick(g, 0.03, 10, members());
+  assert.equal(doorIsOpen(g, d.id, 10), true);
+  Object.assign(p, ARENA.spawns[0]);
+  tick(g, 0.03, 11, members());
+  assert.equal(doorIsOpen(g, d.id, 11), false);
+});
+test("controller door locks are temporary and cannot close through a runner", () => {
+  const g = playing(),
+    d = ARENA.doors[0],
+    p = g.players[0];
+  Object.assign(p, { x: d.x, z: d.z });
+  openDoor(g, 0, d.id, 4);
+  assert.equal(action(g, 1, d.id, 4.1), null);
+  tick(g, 0.03, 4.9, members());
+  assert.equal(doorIsOpen(g, d.id, 4.9), true);
+  assert.equal(g.energy[0], 100);
+  Object.assign(p, ARENA.spawns[0]);
+  assert.equal(action(g, 1, d.id, 10), null);
+  tick(g, 0.03, 10.8, members());
+  Object.assign(p, { x: d.x, z: d.z });
+  assert.match(openDoor(g, 0, d.id, 11), /locked/);
+  assert.equal(openDoor(g, 0, d.id, 14), null);
 });

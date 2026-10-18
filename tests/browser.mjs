@@ -40,9 +40,20 @@ try {
   async function pageAt(width = 1280, height = 800) {
     const context = await browser.newContext({ viewport: { width, height } });
     contexts.push(context);
-    await context.addInitScript(() =>
-      localStorage.setItem("mr-quality", "low"),
-    );
+    await context.addInitScript(() => {
+      localStorage.setItem("mr-quality", "low");
+      window.__notes = 0;
+      const original = AudioContext.prototype.createOscillator;
+      AudioContext.prototype.createOscillator = function (...args) {
+        const osc = original.apply(this, args),
+          start = osc.start.bind(osc);
+        osc.start = (...values) => {
+          window.__notes++;
+          return start(...values);
+        };
+        return osc;
+      };
+    });
     const page = await context.newPage();
     page.on("pageerror", (e) => errors.push(e.message));
     await page.goto(url);
@@ -102,41 +113,59 @@ try {
   log("Match live");
   const controller = pages[1];
   await controller.screenshot({ path: "test-results/controller.png" });
-  assert.equal(await controller.locator(".device-marker").count(), 11);
-  await controller.locator("#device-g0").click();
+  assert.ok((await controller.locator(".device-marker").count()) > 100);
+  assert.ok((await controller.locator(".device-marker:visible").count()) <= 6);
+  await controller.locator('[data-tool="bumper"]').click();
+  await controller.locator("#device-b0").waitFor({ state: "visible" });
+  await controller.locator("#device-b0").click();
   await controller.waitForFunction(
-    () => parseInt(document.querySelector("#energy-value").textContent) < 90,
+    () => parseInt(document.querySelector("#energy-value").textContent) < 95,
   );
-  assert.equal(await controller.locator("#device-g0").isDisabled(), true);
-  const before = await host.locator("#compass").textContent();
+  assert.ok(
+    (await controller.locator(".device-marker:visible:disabled").count()) >= 1,
+  );
+  const before = await controller.locator("#label-0").boundingBox();
+  assert.equal(await host.locator("#label-0").isVisible(), false);
+  await host.keyboard.press("KeyE");
   await host.keyboard.down("KeyW");
-  await host.waitForTimeout(450);
+  await host.waitForTimeout(700);
   await host.keyboard.up("KeyW");
+  await host.keyboard.press("KeyE");
+  await host.keyboard.down("KeyA");
+  await host.waitForTimeout(650);
+  await host.keyboard.up("KeyA");
   await host.waitForTimeout(250);
-  assert.notEqual(
-    await host.locator("#compass").textContent(),
-    before,
-    "runner movement should change target distance",
+  const after = await controller.locator("#label-0").boundingBox();
+  assert.ok(
+    Math.hypot(after.x - before.x, after.y - before.y) > 1,
+    "Runner movement must reach the teammate’s view",
   );
+  await host.waitForFunction(() => window.__notes > 12);
   await host.keyboard.press("Space");
   await host.waitForTimeout(160);
   await host.screenshot({ path: "test-results/runner.png" });
   await host.locator("#audio").click();
-  assert.equal(await host.locator("#audio").textContent(), "Sound off");
+  assert.equal(await host.locator("#audio").textContent(), "Music off");
+  await host.locator("#settings").click();
   await host.selectOption("#quality", "low");
+  await host.locator("#volume").fill("20");
+  assert.equal(await host.locator("#volume-number").textContent(), "20%");
   await host.locator("#help").click();
   await host.locator("#got-it").click();
-  // Refresh preserves a seat and resumes a paused live match.
-  log("Reloading host");
-  await host.reload();
-  await host.locator(".role-card").waitFor({ timeout: 25000 });
-  log("Seat recovered");
-  assert.match(await host.locator(".role-card strong").textContent(), /RUNNER/);
   for (const p of pages) {
     await p.locator("#exit-game").click();
     await p.locator("#leave-now").click();
     await p.locator("#practice").waitFor();
   }
+  await host.waitForTimeout(350);
+  assert.equal(
+    await host.locator("#practice").isVisible(),
+    true,
+    "Late snapshots must not resurrect a room after leaving",
+  );
+  // Release the three other software-rendered GPUs before a page reload.
+  // Four-player reconnection is covered by the real Socket.IO integration test.
+  for (const context of contexts.slice(1)) await context.close();
   // A controller practice game progresses, scores, and swaps the human into runner.
   log("Testing solo practice");
   await host.locator("#practice").click();
@@ -147,11 +176,19 @@ try {
     await host.locator(".role-card strong").textContent(),
     "CONTROLLER",
   );
+  log("Reloading practice player");
+  await host.reload();
+  await host.locator(".role-card").waitFor({ timeout: 25000 });
+  assert.equal(
+    await host.locator(".role-card strong").textContent(),
+    "CONTROLLER",
+  );
+  log("Practice seat recovered");
   await host.waitForFunction(
     () =>
       document.querySelector("#round-label")?.textContent.includes("ROUND 2"),
     {},
-    { timeout: 105000 },
+    { timeout: 205000 },
   );
   assert.equal(await host.locator(".role-card strong").textContent(), "RUNNER");
   assert.equal(errors.length, 0, `Browser errors: ${errors.join("\n")}`);

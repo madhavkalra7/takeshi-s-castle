@@ -2,7 +2,9 @@
 
 A full 3D, real-time **2v2 browser game**. One teammate runs the maze; the other operates its walls, gates, and bumpers. Built with Three.js, Socket.IO, and an authoritative Node.js server.
 
-![MAZE RIOT arena](docs/arena.png)
+![First-person runner view](docs/runner.png)
+
+![Controller view](docs/arena.png)
 
 ## Play locally
 
@@ -23,23 +25,24 @@ For friends on your local network, use your computer's LAN IP instead of localho
 
 - **Tidal vs Ember**, one runner and one controller per team.
 - Runners collect their own team-coloured key and reach the north exit.
-- Each round lasts **90 seconds**. A timeout or simultaneous finish is a draw.
+- Each round lasts **180 seconds**. A timeout or simultaneous finish is a draw.
 - Teammates **swap roles after every round**. First to **three points** wins.
 - Both teams share the same devices. Traps affect either runner.
 - Controllers see the opposing runner only within **6.8 metres** of their teammate.
 - Use an external voice call to coordinate; voice chat is not built in.
 
-| Role          | Controls                                                                      |
-| ------------- | ----------------------------------------------------------------------------- |
-| Runner        | WASD / arrow keys to move; mouse to look; Space to jump; E to shove           |
-| Runner camera | Click arena to capture mouse; Esc releases; drag-to-look fallback; wheel zoom |
-| Controller    | Click labelled devices in the overhead view                                   |
+| Role          | Controls                                                                                     |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| Runner        | WASD / arrow keys to move; mouse to look; Space to jump; E to open a nearby door; F to shove |
+| Runner camera | First-person camera; click arena to capture mouse; Esc releases; drag-to-look fallback       |
+| Controller    | Overhead view; select Doors / Walls / Bumpers; click a control; mouse wheel zooms            |
 
-| Device | Energy | Cooldown  | Behaviour                                          |
-| ------ | ------ | --------- | -------------------------------------------------- |
-| Rotate | 30     | 5 seconds | Turns a junction wall by 90°                       |
-| Gate   | 35     | 7 seconds | Closes a doorway for 3 seconds                     |
-| Bumper | 40     | 6 seconds | Knocks back nearby grounded runners; jump to dodge |
+| Device    | Energy | Cooldown  | Behaviour                                                               |
+| --------- | ------ | --------- | ----------------------------------------------------------------------- |
+| Door lock | 18     | 5 seconds | Locks a room door for 3 seconds; runners can open unlocked doors with E |
+| Rotate    | 30     | 5 seconds | Turns a junction wall by 90°                                            |
+| Gate      | 35     | 7 seconds | Closes a doorway for 3 seconds                                          |
+| Bumper    | 40     | 6 seconds | Knocks back nearby grounded runners; jump to dodge                      |
 
 Energy starts at 100 and regenerates at 9/second. Devices give a 0.75-second warning. Gates and walls refuse unsafe activation through a runner, refunding energy. Shove has a 2.5-second cooldown. Walls cannot be jumped over.
 
@@ -85,8 +88,9 @@ Browser checks use four independent player sessions and cover responsive menus, 
 - `server/index.js` — rooms, authoritative ticking, reconnects, permissions, serving.
 - `src/scene.js` — procedural stadium, characters, camera, lighting, animation.
 - `src/main.js` — menus, HUD, input, prediction, audio, socket client.
+- `src/music.js` — original procedural ambient soundtrack, percussion, mute and volume controls. Music starts after user interaction, pauses when the page is hidden, and resumes with the match.
 - `src/style.css` — interface and responsive layout.
 
-The arena is symmetric, including gates and key routes. Floor tiles and stadium seats use GPU instancing. The runner camera fades occluding walls; the controller gets a wide overhead view. Low graphics disables shadows and reduces pixel density. All art is original procedural geometry.
+The 11×11 maze has 121 rooms, 113 sliding room doors, narrow doorways, dead ends, and branching routes. Doors open for 5.5 seconds after a nearby runner presses E. They stay open while a runner occupies the frame. Controllers can temporarily lock them, but cannot lock through a runner. The arena is symmetric, including gates and key routes. Floor tiles and stadium seats use GPU instancing. The runner camera is first-person at eye height; your own character is hidden. The controller gets an overhead view with category tabs and at most six nearby door markers. Static architecture is batched by material to reduce draw calls. Settings contains music volume and graphics controls. Low graphics disables shadows and reduces pixel density. All art is original procedural geometry.
 
 This is a tested first playable release. Internet latency, device/browser differences, and long-session behaviour still need real-player playtesting; automated checks cannot guarantee zero bugs.

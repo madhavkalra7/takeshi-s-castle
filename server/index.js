@@ -6,6 +6,7 @@ import {
   createGame,
   tick,
   action,
+  openDoor,
   publicGame,
   roleFor,
   teamFor,
@@ -253,6 +254,12 @@ io.on("connection", (socket) => {
     };
     p.lastInput = now();
   });
+  socket.on("door", (id, ack) => {
+    const room = rooms.get(socket.data.room);
+    if (!room?.game) return reply(ack, { error: "No active match." });
+    const error = openDoor(room.game, socket.data.slot, id, now());
+    reply(ack, error ? { error } : { ok: true });
+  });
   socket.on("action", (id, ack) => {
     const room = rooms.get(socket.data.room);
     if (!room?.game) return reply(ack, { error: "No active match." });
@@ -290,6 +297,8 @@ function resume(room) {
       if (s.cooldown) s.cooldown += delay;
       if (s.until) s.until += delay;
       if (s.warning) s.warning += delay;
+      if (s.openUntil) s.openUntil += delay;
+      if (s.lockedUntil) s.lockedUntil += delay;
     }
     for (const p of room.game.pending) p.at += delay;
     for (const p of room.game.players) {
@@ -334,7 +343,11 @@ setInterval(() => {
     if (room.game)
       for (let slot = 0; slot < 4; slot++) {
         const id = room.members[slot]?.socket;
-        if (id) io.to(id).emit("state", publicGame(room.game, slot, t));
+        if (id)
+          io.to(id).emit("state", {
+            ...publicGame(room.game, slot, t),
+            room: room.code,
+          });
       }
   }
 }, 1000 / 20);

@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { ARENA, CELL, HALF, SIZE } from "../shared/game.js";
+import { ARENA, CELL, HALF, SIZE, MID, doorIsOpen } from "../shared/game.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 export const COLORS = [0x45e0df, 0xff855b];
 const mat = (color, extra = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness: 0.65, ...extra });
@@ -36,17 +37,22 @@ export class ArenaScene {
     });
     sun.shadow.normalBias = 0.035;
     this.scene.add(sun);
+    this.headlight = new THREE.PointLight(0xffe5bd, 9, 11, 1.6);
+    this.headlight.visible = false;
+    this.scene.add(this.headlight);
     this.warningMaterial = new THREE.MeshBasicMaterial({ color: 0xff6633 });
     this.materials = {
       floor: mat(0xcccfc0),
-      wall: mat(0x247d8b),
-      cap: mat(0xb5e2d7),
+      wall: mat(0x677d7b),
+      cap: mat(0xc4c9b7),
       dark: mat(0x172b3e),
       white: mat(0xf4eee2),
       gold: mat(0xffd365, { metalness: 0.35 }),
       cyan: mat(COLORS[0]),
       orange: mat(COLORS[1]),
     };
+    this.materials.wall.map = this.surfaceTexture("stone");
+    this.materials.cap.color.setHex(0xd2c7ab);
     this.world = new THREE.Group();
     this.scene.add(this.world);
     this.devices = new Map();
@@ -56,31 +62,91 @@ export class ArenaScene {
     this.particles = [];
     this.elapsed = 0;
     this.yaw = 0;
-    this.pitch = 0.7;
-    this.zoom = 8;
+    this.pitch = 0;
+    this.zoom = 1;
     this.mode = "landing";
     this.pointer = new THREE.Vector2();
     this.raycaster = new THREE.Raycaster();
     this.build();
-    this.faded = [];
-    this.cameraWalls = [
-      ...this.world.children.filter(
-        (o) =>
-          o.isMesh &&
-          o.geometry?.type === "BoxGeometry" &&
-          o.position.y >= 1 &&
-          o.position.y <= 3,
-      ),
-    ];
-    for (const obj of this.devices.values())
-      obj.group.traverse((o) => {
-        if (o.isMesh) this.cameraWalls.push(o);
-      });
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
     this.resize();
     this.camera.position.set(37, 32, 40);
     this.camera.lookAt(0, 0, 0);
+  }
+  surfaceTexture(kind) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext("2d");
+    let seed = 45;
+    const random = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+    ctx.fillStyle =
+      kind === "door" ? "#6c8f8b" : kind === "floor" ? "#bfc4b7" : "#d3d0c3";
+    ctx.fillRect(0, 0, 512, 512);
+    for (let i = 0; i < 14000; i++) {
+      const value = random();
+      ctx.fillStyle = `rgba(${value > 0.5 ? "255,255,255" : "0,0,0"},${random() * 0.07})`;
+      ctx.fillRect(random() * 512, random() * 512, random() * 3 + 1, 1);
+    }
+    if (kind === "door") {
+      const gradient = ctx.createLinearGradient(0, 0, 512, 0);
+      gradient.addColorStop(0, "#09252c");
+      gradient.addColorStop(0.5, "#507873");
+      gradient.addColorStop(1, "#173b40");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(24, 20, 464, 472);
+      ctx.strokeStyle = "#9ab0a0";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(35, 32, 442, 448);
+      ctx.fillStyle = "#0b2029";
+      ctx.fillRect(85, 70, 342, 115);
+      ctx.strokeStyle = "#c4ac74";
+      ctx.lineWidth = 8;
+      ctx.strokeRect(85, 70, 342, 115);
+      ctx.fillStyle = "#90c4bb";
+      ctx.fillRect(96, 80, 320, 8);
+      ctx.fillStyle = "#19363c";
+      for (let x = 130; x < 420; x += 50) ctx.fillRect(x, 90, 8, 85);
+      ctx.fillStyle = "#d2b87c";
+      ctx.fillRect(205, 235, 102, 16);
+      ctx.fillStyle = "#152c32";
+      for (let y = 340; y < 435; y += 20) ctx.fillRect(95, y, 320, 5);
+      ctx.fillStyle = "#b6baa0";
+      for (const x of [48, 464])
+        for (const y of [45, 467]) {
+          ctx.beginPath();
+          ctx.arc(x, y, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+    } else {
+      if (kind === "floor") {
+        ctx.strokeStyle = "#63756550";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(18, 18, 476, 476);
+        ctx.strokeStyle = "#ede3bd24";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(24, 24, 464, 464);
+      }
+      ctx.strokeStyle = "#7a8c821c";
+      ctx.lineWidth = 2;
+      for (let y = 0; y <= 512; y += 128) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(512, y);
+        ctx.stroke();
+      }
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = Math.min(
+      4,
+      this.renderer.capabilities.getMaxAnisotropy(),
+    );
+    return texture;
   }
   box(w, h, d, x, y, z, material, parent = this.world) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
@@ -125,7 +191,7 @@ export class ArenaScene {
     this.box(HALF * 2 + 1.8, 1, HALF * 2 + 1.8, 0, -0.6, 0, m.dark);
     const floor = new THREE.InstancedMesh(
       new THREE.BoxGeometry(CELL - 0.04, 0.12, CELL - 0.04),
-      mat(0xffffff),
+      mat(0xffffff, { map: this.surfaceTexture("floor") }),
       SIZE * SIZE,
     );
     for (let r = 0; r < SIZE; r++)
@@ -134,18 +200,18 @@ export class ArenaScene {
         floor.setMatrixAt(
           i,
           new THREE.Matrix4().makeTranslation(
-            (c - 4) * CELL,
+            (c - MID) * CELL,
             -0.06,
-            (r - 4) * CELL,
+            (r - MID) * CELL,
           ),
         );
-        floor.setColorAt(i, new THREE.Color((r + c) % 2 ? 0xcbd1c5 : 0xdce0d2));
+        floor.setColorAt(i, new THREE.Color((r + c) % 2 ? 0x819187 : 0x8d9a8e));
       }
     floor.receiveShadow = true;
     this.world.add(floor);
     for (const w of ARENA.walls) {
-      this.box(w.w, 2.25, w.d, w.x, 1.125, w.z, m.wall);
-      this.box(w.w + 0.06, 0.16, w.d + 0.06, w.x, 2.32, w.z, m.cap);
+      this.box(w.w, 3.12, w.d, w.x, 1.56, w.z, m.wall);
+      this.box(w.w + 0.06, 0.16, w.d + 0.06, w.x, 3.2, w.z, m.cap);
     }
     for (const [x, z, w, d] of [
       [-HALF, 0, 0.4, HALF * 2],
@@ -157,7 +223,7 @@ export class ArenaScene {
     }
     for (const x of [-(HALF + 1.7) / 2, (HALF + 1.7) / 2])
       this.box(HALF - 1.7, 2.6, 0.4, x, 1.3, -HALF, m.dark);
-    this.box(3.3, 0.14, 2.8, 0, 0.03, -13.7, mat(0x97efae));
+    this.box(3.3, 0.14, 2.8, 0, 0.03, ARENA.exit.z, mat(0x97efae));
     for (const x of [-1.8, 1.8])
       this.box(0.3, 4, 0.4, x, 2, -HALF + 0.2, m.gold);
     this.box(4, 0.45, 0.5, 0, 4, -HALF + 0.2, m.gold);
@@ -239,6 +305,67 @@ export class ArenaScene {
         }
       });
     }
+    const doorMaterial = mat(0xffffff, {
+      map: this.surfaceTexture("door"),
+      metalness: 0.3,
+      roughness: 0.45,
+    });
+    const doorTrim = mat(0xd8b985, { metalness: 0.55, roughness: 0.4 });
+    for (const d of ARENA.doors) {
+      const alongX = d.w > d.d,
+        group = new THREE.Group();
+      group.position.set(d.x, 0, d.z);
+      this.world.add(group);
+      const panels = [];
+      for (const sign of [-1, 1]) {
+        const panel = this.box(
+          alongX ? 0.85 : 0.18,
+          2.65,
+          alongX ? 0.18 : 0.85,
+          alongX ? sign * 0.425 : 0,
+          1.325,
+          alongX ? 0 : sign * 0.425,
+          doorMaterial,
+          group,
+        );
+        panels.push(panel);
+        this.box(
+          0.14,
+          3.05,
+          0.14,
+          d.x + (alongX ? sign * 0.94 : 0),
+          1.525,
+          d.z + (alongX ? 0 : sign * 0.94),
+          doorTrim,
+        );
+      }
+      this.box(
+        alongX ? 2.02 : 0.3,
+        0.25,
+        alongX ? 0.3 : 2.02,
+        d.x,
+        2.9,
+        d.z,
+        doorTrim,
+      );
+      // Small illuminated transom marks a doorway without a floating label.
+      this.box(
+        alongX ? 0.8 : 0.05,
+        0.035,
+        alongX ? 0.05 : 0.8,
+        d.x,
+        2.76,
+        d.z,
+        new THREE.MeshBasicMaterial({ color: 0xffd59a }),
+      );
+      this.devices.set(d.id, { group, panels, alongX, type: "door", slide: 0 });
+      group.traverse((o) => {
+        if (o.isMesh) {
+          o.userData.device = d.id;
+          this.pickables.push(o);
+        }
+      });
+    }
     for (const b of ARENA.bumpers) {
       const group = new THREE.Group();
       group.position.set(b.x, 0, b.z);
@@ -293,12 +420,12 @@ export class ArenaScene {
       this.world.add(stand);
       for (let row = 0; row < 4; row++) {
         this.box(
-          37,
+          HALF * 2 + 6,
           0.65,
           1.4,
           0,
           row * 0.7 - 0.3,
-          19 + row * 1.5,
+          HALF + 4 + row * 1.5,
           m.dark,
           stand,
         );
@@ -308,9 +435,9 @@ export class ArenaScene {
               (side * Math.PI) / 2,
             ),
             v = new THREE.Vector3(
-              (seat - 11.5) * 1.4,
+              (seat - 11.5) * ((HALF * 2 + 4) / 24),
               row * 0.7 + 0.18,
-              19 + row * 1.5,
+              HALF + 4 + row * 1.5,
             ).applyQuaternion(q);
           seats.setMatrixAt(
             seatIndex,
@@ -324,12 +451,21 @@ export class ArenaScene {
           );
         }
       }
-      this.box(35, 0.13, 0.13, 0, 3, 24, side % 2 ? m.orange : m.cyan, stand);
+      this.box(
+        HALF * 2 + 6,
+        0.13,
+        0.13,
+        0,
+        3,
+        HALF + 9,
+        side % 2 ? m.orange : m.cyan,
+        stand,
+      );
     }
     seats.receiveShadow = true;
     this.world.add(seats);
-    for (const x of [-22, 22])
-      for (const z of [-22, 22]) {
+    for (const x of [-HALF - 7, HALF + 7])
+      for (const z of [-HALF - 7, HALF + 7]) {
         this.box(0.35, 13, 0.35, x, 6.5, z, m.dark);
         const bank = this.box(3, 0.8, 0.5, x, 12.5, z, m.white);
         bank.rotation.y = x * z > 0 ? -0.7 : 0.7;
@@ -345,10 +481,10 @@ export class ArenaScene {
           );
       }
     const board = this.text("MAZE / RIOT", 13, 2.4, "#ffdc80");
-    board.position.set(0, 8, -23);
+    board.position.set(0, 8, -HALF - 8);
     this.world.add(board);
     const sub = this.text("CONTROL THE CHAOS", 10, 1, "#45e0df");
-    sub.position.set(0, 6, -23);
+    sub.position.set(0, 6, -HALF - 8);
     this.world.add(sub);
     const ground = this.box(200, 0.3, 200, 0, -1.7, 0, mat(0x0c1928));
     ground.castShadow = false;
@@ -366,6 +502,31 @@ export class ArenaScene {
         new THREE.MeshBasicMaterial({ color: i % 2 ? 0xffcb76 : 0x6ce8ed }),
       );
     }
+    const batches = new Map();
+    this.world.updateMatrixWorld(true);
+    for (const mesh of [...this.world.children])
+      if (mesh.isMesh && !mesh.isInstancedMesh && !mesh.material.transparent) {
+        const list = batches.get(mesh.material) || [];
+        list.push(mesh);
+        batches.set(mesh.material, list);
+      }
+    for (const [material, meshes] of batches)
+      if (meshes.length > 1) {
+        const geometries = meshes.map((mesh) =>
+          mesh.geometry.clone().applyMatrix4(mesh.matrix),
+        );
+        const geometry = mergeGeometries(geometries);
+        geometries.forEach((g) => g.dispose());
+        if (!geometry) continue;
+        const combined = new THREE.Mesh(geometry, material);
+        combined.castShadow = true;
+        combined.receiveShadow = true;
+        this.world.add(combined);
+        meshes.forEach((mesh) => {
+          this.world.remove(mesh);
+          mesh.geometry.dispose();
+        });
+      }
   }
   avatar(team) {
     const g = new THREE.Group(),
@@ -419,6 +580,9 @@ export class ArenaScene {
     if (this.mode !== mode) {
       this.mode = mode;
       this.cameraReady = false;
+      this.camera.fov = mode === "runner" ? 88 : 48;
+      this.camera.updateProjectionMatrix();
+      if (mode === "runner") this.pitch = 0.12;
     }
   }
   project(x, y, z) {
@@ -444,12 +608,14 @@ export class ArenaScene {
     const t = this.elapsed,
       own = state?.players[slot],
       time = state?.serverTime || 0;
+    this.headlight.visible = own?.role === "runner";
     if (!state) {
-      for (const mesh of this.faded)
-        mesh.material = mesh.userData.originalMaterial;
-      this.faded = [];
       this.setMode("landing");
-      const pos = new THREE.Vector3(36 + Math.sin(t * 0.06) * 3, 32, 39);
+      const pos = new THREE.Vector3(
+        HALF * 1.8 + Math.sin(t * 0.06) * 3,
+        HALF * 1.65,
+        HALF * 2,
+      );
       this.camera.position.lerp(pos, 0.03);
       this.camera.lookAt(0, 0, -1);
       for (let i = 0; i < 2; i++) {
@@ -459,6 +625,8 @@ export class ArenaScene {
         a.position.set(ARENA.spawns[i].x, 0, ARENA.spawns[i].z);
       }
     } else {
+      if (this.mode !== own.role && own.role === "runner")
+        this.yaw = own.team === 0 ? -Math.PI / 2 : Math.PI / 2;
       this.setMode(own.role);
       for (const [id, a] of this.avatars) {
         a.visible = false;
@@ -469,7 +637,7 @@ export class ArenaScene {
           a = this.avatar(p.team);
           this.avatars.set(p.slot + 10, a);
         }
-        a.visible = !p.hidden;
+        a.visible = !p.hidden && !(own.role === "runner" && p.slot === slot);
         if (p.hidden) continue;
         const target = p.slot === slot && local ? local : p;
         const desired = new THREE.Vector3(target.x, target.y || 0, target.z);
@@ -492,62 +660,33 @@ export class ArenaScene {
         );
       }
       if (own.role === "runner") {
-        const p = local || own,
-          focus = new THREE.Vector3(p.x, 1.15 + (p.y || 0) * 0.4, p.z);
-        const desired = focus
-          .clone()
-          .add(
-            new THREE.Vector3(
-              Math.sin(this.yaw) * this.zoom,
-              Math.sin(this.pitch) * this.zoom + 1.1,
-              Math.cos(this.yaw) * this.zoom,
-            ),
-          );
-        // Keep a stable third-person distance. Fade occluding walls rather than
-        // pushing the camera into the character in a narrow corridor.
-        for (const mesh of this.faded) {
-          mesh.material = mesh.userData.originalMaterial;
-        }
-        this.faded = [];
-        const dir = desired.clone().sub(focus),
-          distance = dir.length();
-        this.raycaster.set(focus, dir.normalize());
-        for (const hit of this.raycaster.intersectObjects(
-          this.cameraWalls,
-          false,
-        )) {
-          if (hit.distance > distance) continue;
-          const mesh = hit.object;
-          if (!mesh.userData.fadeMaterial) {
-            mesh.userData.originalMaterial = mesh.material;
-            mesh.userData.fadeMaterial = mesh.material.clone();
-            mesh.userData.fadeMaterial.transparent = true;
-            mesh.userData.fadeMaterial.opacity = 0.13;
-            mesh.userData.fadeMaterial.depthWrite = false;
-          }
-          mesh.material = mesh.userData.fadeMaterial;
-          this.faded.push(mesh);
-        }
-        if (!this.cameraReady) this.camera.position.copy(desired);
-        else this.camera.position.lerp(desired, 1 - Math.exp(-dt * 12));
-        this.camera.lookAt(focus);
+        const p = local || own;
+        this.camera.position.set(p.x, 1.62 + (p.y || 0), p.z);
+        this.camera.rotation.set(-this.pitch, this.yaw, 0, "YXZ");
+        this.headlight.position.copy(this.camera.position);
         this.cameraReady = true;
       } else {
-        for (const mesh of this.faded)
-          mesh.material = mesh.userData.originalMaterial;
-        this.faded = [];
         const desired = new THREE.Vector3(
           0,
-          Math.max(39, 35 / this.camera.aspect),
-          18,
+          Math.max(HALF * 2.65, (HALF * 2.4) / this.camera.aspect) * this.zoom,
+          HALF * 0.78 * this.zoom,
         );
         this.camera.position.lerp(
           desired,
-          this.cameraReady ? 1 - Math.exp(-dt * 6) : 1,
+          this.cameraReady ? 1 - Math.exp(-dt * 8) : 1,
         );
         this.camera.lookAt(0, 0, 0);
         this.cameraReady = true;
       }
+    }
+    for (const d of ARENA.doors) {
+      const obj = this.devices.get(d.id),
+        open = state ? doorIsOpen(state, d.id, time) : false;
+      obj.slide += ((open ? 1 : 0) - obj.slide) * Math.min(1, dt * 15);
+      obj.panels.forEach((panel, i) => {
+        const offset = (i === 0 ? -1 : 1) * (0.425 + obj.slide * 0.85);
+        panel.position[obj.alongX ? "x" : "z"] = offset;
+      });
     }
     for (const r of ARENA.rotators) {
       const obj = this.devices.get(r.id),

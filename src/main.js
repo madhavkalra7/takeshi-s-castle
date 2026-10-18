@@ -1,7 +1,9 @@
 import { io } from "socket.io-client";
+import { Music } from "./music.js";
 import { ArenaScene } from "./scene.js";
 import {
   ARENA,
+  doorIsOpen,
   COST,
   COOLDOWN,
   TEAM_NAMES,
@@ -41,6 +43,10 @@ let state = null,
   mute = localStorage.getItem("mr-mute") === "true",
   quality = localStorage.getItem("mr-quality") || "high",
   audio = null;
+const music = new Music();
+let roomActive = false;
+let selectedTool = "door",
+  nearDoor = null;
 const keys = new Set();
 let jump = false,
   shove = false,
@@ -58,7 +64,12 @@ const esc = (s) =>
   );
 const icon = '<span class="brand-icon">↱</span>';
 const brand = `<div class="brand">${icon} MAZE<span>RIOT</span></div>`;
-const devices = [...ARENA.rotators, ...ARENA.gates, ...ARENA.bumpers];
+const devices = [
+  ...ARENA.rotators,
+  ...ARENA.gates,
+  ...ARENA.bumpers,
+  ...ARENA.doors,
+];
 function toast(message) {
   const root = document.querySelector("#notifications");
   root.innerHTML = `<div class="toast">${esc(message)}</div>`;
@@ -66,6 +77,7 @@ function toast(message) {
   toastTimer = setTimeout(() => (root.innerHTML = ""), 3500);
 }
 function sound(frequency = 500, duration = 0.08) {
+  music.unlock();
   if (mute) return;
   try {
     audio ||= new AudioContext();
@@ -74,7 +86,7 @@ function sound(frequency = 500, duration = 0.08) {
       gain = audio.createGain();
     osc.type = "sine";
     osc.frequency.setValueAtTime(frequency, audio.currentTime);
-    gain.gain.setValueAtTime(0.055, audio.currentTime);
+    gain.gain.setValueAtTime(0.055 * music.volume, audio.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + duration);
     osc.connect(gain);
     gain.connect(audio.destination);
@@ -100,7 +112,7 @@ function closeModal() {
 }
 function instructions() {
   modal(
-    `<h2>Friends. Rivals. Chaos.</h2><p>Four players. Two teams. The first team to win three rounds takes the arena.</p><div class="instruction"><span class="num">01</span><div><strong>RUN THE MAZE</strong><p>Grab your team-coloured key, then race to the north EXIT. WASD to move, mouse to look, Space to jump, E to shove nearby rivals.</p></div></div><div class="instruction"><span class="num">02</span><div><strong>CONTROL THE CHAOS</strong><p>Click labelled devices to rotate walls (30 energy), close gates for 3 seconds (35), or fire bumpers (40). Energy regenerates. Devices have shared cooldowns.</p></div></div><div class="instruction"><span class="num">03</span><div><strong>PLAY AS A TEAM</strong><p>Talk using your favourite voice app. Controllers see opponents only near their runner. All traps affect both teams! Roles swap every round.</p></div></div><p>Traps flash before firing. Walls and gates refuse to close through a runner and refund the energy. Jump over an active bumper to avoid its hit.</p><button id="got-it" class="primary">LET’S GO →</button>`,
+    `<h2>Friends. Rivals. Chaos.</h2><p>Four players. Two teams. The first team to win three rounds takes the arena.</p><div class="instruction"><span class="num">01</span><div><strong>RUN THE MAZE</strong><p>Grab your team-coloured key, then race to the north EXIT. WASD to move, mouse to look, Space to jump, E to open doors, F to shove nearby rivals.</p></div></div><div class="instruction"><span class="num">02</span><div><strong>CONTROL THE CHAOS</strong><p>Click labelled devices to rotate walls (30 energy), close gates for 3 seconds (35), or fire bumpers (40). Energy regenerates. Devices have shared cooldowns.</p></div></div><div class="instruction"><span class="num">03</span><div><strong>PLAY AS A TEAM</strong><p>Talk using your favourite voice app. Controllers see opponents only near their runner. All traps affect both teams! Roles swap every round.</p></div></div><p>Traps flash before firing. Walls and gates refuse to close through a runner and refund the energy. Jump over an active bumper to avoid its hit.</p><button id="got-it" class="primary">LET’S GO →</button>`,
   );
   button("got-it", closeModal);
 }
@@ -169,6 +181,7 @@ async function enter(mode, extra = {}) {
   const result = await request("enter", { mode, name: playerName(), ...extra });
   requestBusy = false;
   if (result.error) return toast(result.error);
+  roomActive = true;
   slot = result.slot;
   token = result.token;
   lobby = result.lobby;
@@ -224,6 +237,7 @@ function renderLobby() {
         const r = await request("seat", Number(b.dataset.seat));
         if (r.error) toast(r.error);
         else {
+          roomActive = true;
           slot = r.slot;
           renderLobby();
         }
@@ -241,10 +255,12 @@ async function copyInvite() {
   }
 }
 function leaveRoom() {
+  roomActive = false;
   socket.emit("leave");
   sessionStorage.removeItem("mr-session");
   history.replaceState({}, "", location.pathname);
   state = null;
+  music.setActive(false);
   lobby = null;
   local = null;
   stopInput();
@@ -264,21 +280,29 @@ function gameUI() {
   const own = state.players[slot],
     controller = own.role === "controller";
   screenKey = `game-${own.role}-${state.round}`;
-  ui.innerHTML = `<header class="game-top">${brand}<div class="scoreboard"><div class="score-team">TIDAL<strong id="score0">0</strong></div><div class="clock" id="clock-wrap"><strong id="clock">1:30</strong><small id="round-label">ROUND 1 · FIRST TO 3</small></div><div class="score-team orange">EMBER<strong id="score1">0</strong></div></div><div class="game-tools"><button class="quiet" id="audio" aria-label="Toggle sound">${mute ? "Sound off" : "Sound on"}</button><button class="quiet" id="help" aria-label="Help">?</button><button class="quiet" id="exit-game">Leave</button></div></header><aside class="role-card ${own.team ? "ember" : ""}"><small>TEAM ${TEAM_NAMES[own.team]} · YOU ARE THE</small><strong>${controller ? "CONTROLLER" : "RUNNER"}</strong><p>${controller ? "Guide your runner. Click devices to change the maze. Traps affect both teams." : "Find your team’s key, then reach the north exit. Your controller knows the way."}</p></aside><aside class="objective"><small>${controller ? "YOUR RUNNER’S MISSION" : "YOUR MISSION"}</small><div id="key-objective">◇ Find your key</div><div id="exit-objective">↟ Reach the exit</div><div class="compass" id="compass"></div></aside><div id="markers"></div><div id="player-labels"></div><div id="phase-message"></div><div id="connection"></div><div class="event-feed" id="event-feed"></div><div class="game-bottom"><div class="controls-hint">${controller ? "<span>↻ <b>ROTATE</b> · 30</span><span>▥ <b>GATE</b> · 35</span><span>✦ <b>BUMPER</b> · 40</span>" : "<span><kbd>W A S D</kbd> Move</span><span><kbd>SPACE</kbd> Jump</span><span><kbd>E</kbd> Shove</span><span>Mouse · Look</span>"}</div>${controller ? '<div class="energy-card"><div class="label"><span>CONTROL ENERGY</span><b id="energy-value">100 / 100</b></div><div class="energy-track"><div class="energy-fill" id="energy-fill"></div></div><small>+9 / second · shared device cooldowns</small></div>' : '<div class="energy-card"><div class="label"><span>SHOVE</span><b id="shove-value">READY</b></div><div class="energy-track"><div class="energy-fill" id="shove-fill"></div></div><small>Get close. Press E. Make it personal.</small></div>'}<select id="quality" class="quality-select" aria-label="Graphics quality"><option value="high">High graphics</option><option value="low">Low graphics</option></select></div>${controller ? "" : '<div class="reticle"></div><div class="look-hint" id="look-hint">Click the arena to look around · Esc releases the mouse</div>'}`;
-  document.querySelector("#quality").value = quality;
-  document.querySelector("#quality").onchange = (e) => {
-    quality = e.target.value;
-    localStorage.setItem("mr-quality", quality);
-  };
+  ui.dataset.role = own.role;
+  ui.innerHTML = `<header class="game-top"><div class="scoreboard"><div class="score-team">TIDAL<strong id="score0">0</strong></div><div class="clock" id="clock-wrap"><strong id="clock">3:00</strong><small id="round-label">ROUND 1</small></div><div class="score-team orange">EMBER<strong id="score1">0</strong></div></div><div class="game-tools"><button class="quiet" id="audio" aria-label="Toggle music">${mute ? "Music off" : "Music on"}</button><button class="quiet" id="settings">Settings</button><button class="quiet" id="exit-game">Leave</button></div></header><aside class="role-card ${own.team ? "ember" : ""}"><small>${TEAM_NAMES[own.team]}</small><strong>${controller ? "CONTROLLER" : "RUNNER"}</strong></aside><aside class="objective"><small>${controller ? "TEAM OBJECTIVE" : "OBJECTIVE"}</small><div id="key-objective">◇ Find your key</div><div id="exit-objective">↟ Reach the exit</div><div class="compass" id="compass"></div></aside><div id="markers"></div><div id="player-labels"></div><div id="phase-message"></div><div id="connection"></div><div class="event-feed" id="event-feed"></div><div class="game-bottom"><div class="controls-hint">${controller ? '<div class="tool-tabs"><button data-tool="door" class="active">Doors</button><button data-tool="rotate">Walls</button><button data-tool="bumper">Bumpers</button></div>' : "<span><kbd>WASD</kbd> Move</span><span><kbd>E</kbd> Door</span><span><kbd>F</kbd> Shove</span><span><kbd>SPACE</kbd> Jump</span>"}</div>${controller ? '<div class="energy-card"><div class="label"><span>ENERGY</span><b id="energy-value">100 / 100</b></div><div class="energy-track"><div class="energy-fill" id="energy-fill"></div></div></div>' : '<div class="energy-card"><div class="label"><span>SHOVE · F</span><b id="shove-value">READY</b></div><div class="energy-track"><div class="energy-fill" id="shove-fill"></div></div></div>'}</div><div id="door-prompt"></div>${controller ? "" : '<div class="reticle"></div><div class="look-hint" id="look-hint">Click to look around · Esc releases mouse</div>'}`;
+  selectedTool = "door";
+  ui.querySelectorAll("[data-tool]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        selectedTool = b.dataset.tool;
+        ui.querySelectorAll("[data-tool]").forEach((t) =>
+          t.classList.toggle("active", t === b),
+        );
+        positionOverlays();
+      }),
+  );
   button("audio", () => {
     mute = !mute;
     localStorage.setItem("mr-mute", mute);
+    music.setMuted(mute);
     document.querySelector("#audio").textContent = mute
-      ? "Sound off"
-      : "Sound on";
-    sound();
+      ? "Music off"
+      : "Music on";
+    music.unlock();
   });
-  button("help", instructions);
+  button("settings", settingsDialog);
   button("exit-game", leaveDialog);
   if (controller) {
     const markers = document.querySelector("#markers");
@@ -382,7 +406,8 @@ function updateHUD() {
     : '<div class="connection-banner">Connection lost · reconnecting…</div>';
   document.querySelector("#event-feed").innerHTML = state.events
     .filter((e) => state.serverTime - e.at < 4 && e.id > 0)
-    .slice(-2)
+    .filter((e) => /key|escaped|wins/i.test(e.text))
+    .slice(-1)
     .map((e) => `<div>${esc(e.text)}</div>`)
     .join("");
   const event = state.events.at(-1);
@@ -393,40 +418,106 @@ function updateHUD() {
 }
 function positionOverlays() {
   if (!state) return;
-  const own = state.players[slot];
-  if (own.role === "controller")
+  const own = state.players[slot],
+    runner = state.players.find(
+      (p) => p.role === "runner" && p.team === own.team,
+    );
+  if (own.role === "controller") {
+    const candidates = devices
+      .filter((d) =>
+        selectedTool === "door"
+          ? ["door", "gate"].includes(d.type)
+          : d.type === selectedTool,
+      )
+      .sort(
+        (a, b) =>
+          Math.hypot(a.x - runner.x, a.z - runner.z) -
+          Math.hypot(b.x - runner.x, b.z - runner.z),
+      );
+    const visible = new Set(
+      candidates.slice(0, selectedTool === "door" ? 6 : 4).map((d) => d.id),
+    );
     for (const d of devices) {
       const b = document.getElementById(`device-${d.id}`);
       if (!b) continue;
-      const p = scene.project(d.x, d.type === "rotate" ? 3.2 : 0.9, d.z),
+      const p = scene.project(d.x, d.type === "rotate" ? 3.4 : 3.1, d.z),
         s = state.devices[d.id] || {},
-        cooldown = Math.max(0, (s.cooldown || 0) - state.serverTime),
+        cd = Math.max(0, (s.cooldown || 0) - state.serverTime),
         warning = s.warning > state.serverTime;
       b.style.left = `${p.x}px`;
       b.style.top = `${p.y}px`;
-      b.style.display = p.visible ? "" : "none";
+      b.style.display = p.visible && visible.has(d.id) ? "" : "none";
       b.disabled =
         state.phase !== "playing" ||
-        cooldown > 0 ||
+        cd > 0 ||
         state.energy[own.team] < COST[d.type];
       b.classList.toggle("warning", warning);
-      b.textContent = `${d.type === "rotate" ? "↻" : d.type === "gate" ? "▥" : "✦"} ${d.id.toUpperCase()} · ${warning ? "!" : cooldown > 0 ? Math.ceil(cooldown) + "s" : COST[d.type]}`;
+      b.textContent = warning
+        ? "!"
+        : cd > 0
+          ? Math.ceil(cd)
+          : d.type === "rotate"
+            ? "↻"
+            : d.type === "bumper"
+              ? "✦"
+              : "▥";
+      b.title = `${d.type === "door" ? "Lock door" : d.type} · ${COST[d.type]} energy`;
     }
+  }
   for (const p of state.players.filter((p) => p.role === "runner")) {
     const label = document.getElementById(`label-${p.slot}`);
     if (!label) continue;
-    const pos = p.slot === slot && local ? local : p;
-    const projected = p.hidden
-      ? { visible: false }
-      : scene.project(pos.x, (pos.y || 0) + 2.1, pos.z);
+    const projected =
+      own.role === "runner" || p.hidden
+        ? { visible: false }
+        : scene.project(p.x, (p.y || 0) + 2.1, p.z);
     label.style.display = projected.visible ? "" : "none";
     label.style.left = `${projected.x}px`;
     label.style.top = `${projected.y}px`;
   }
+  nearDoor = null;
+  const prompt = document.querySelector("#door-prompt");
+  if (own.role === "runner" && state.phase === "playing") {
+    const p = local || own;
+    nearDoor = ARENA.doors
+      .filter(
+        (d) =>
+          Math.hypot(p.x - d.x, p.z - d.z) < 2.4 &&
+          !doorIsOpen(state, d.id, state.serverTime),
+      )
+      .sort(
+        (a, b) =>
+          Math.hypot(p.x - a.x, p.z - a.z) - Math.hypot(p.x - b.x, p.z - b.z),
+      )[0];
+    if (nearDoor) {
+      const locked =
+        (state.devices[nearDoor.id]?.lockedUntil || 0) > state.serverTime;
+      prompt.innerHTML = locked
+        ? '<span class="locked">Door locked · try another route</span>'
+        : "<kbd>E</kbd> Open door";
+    } else prompt.innerHTML = "";
+  } else if (prompt) prompt.innerHTML = "";
   const look = document.querySelector("#look-hint");
   if (look)
     look.style.display =
       document.pointerLockElement || state.phase !== "playing" ? "none" : "";
+}
+function settingsDialog() {
+  modal(
+    `<h2>Make it yours.</h2><label class="field-label" for="volume">MUSIC VOLUME <span id="volume-number">${Math.round(music.volume * 100)}%</span></label><input id="volume" type="range" min="0" max="100" value="${Math.round(music.volume * 100)}"/><label class="field-label" for="quality">GRAPHICS</label><select id="quality" class="quality-select"><option value="high">High graphics</option><option value="low">Low graphics</option></select><p>WASD to move · mouse to look · E to open doors · F to shove · Space to jump. Tell your controller what you see.</p><button id="help" class="secondary">How to play</button><button id="settings-done" class="primary">Back to game</button>`,
+  );
+  document.querySelector("#quality").value = quality;
+  document.querySelector("#quality").onchange = (e) => {
+    quality = e.target.value;
+    localStorage.setItem("mr-quality", quality);
+  };
+  document.querySelector("#volume").oninput = (e) => {
+    music.unlock();
+    music.setVolume(Number(e.target.value) / 100);
+    document.querySelector("#volume-number").textContent = e.target.value + "%";
+  };
+  button("help", instructions);
+  button("settings-done", closeModal);
 }
 async function activate(id) {
   if (!state || state.phase !== "playing") return;
@@ -451,6 +542,7 @@ window.addEventListener("keydown", (e) => {
       "KeyD",
       "Space",
       "KeyE",
+      "KeyF",
       "ArrowUp",
       "ArrowDown",
       "ArrowLeft",
@@ -460,13 +552,19 @@ window.addEventListener("keydown", (e) => {
     if (state) e.preventDefault();
     keys.add(e.code);
     if (!e.repeat && e.code === "Space") jump = true;
-    if (!e.repeat && e.code === "KeyE") shove = true;
+    if (!e.repeat && e.code === "KeyF") shove = true;
+    if (!e.repeat && e.code === "KeyE" && nearDoor)
+      request("door", nearDoor.id).then((r) => {
+        if (r.error) toast(r.error);
+        else sound(330, 0.12);
+      });
   }
 });
 window.addEventListener("keyup", (e) => keys.delete(e.code));
 window.addEventListener("blur", stopInput);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) stopInput();
+  music.apply();
 });
 scene.renderer.domElement.addEventListener("pointerdown", (e) => {
   sound(250, 0.02);
@@ -490,15 +588,18 @@ window.addEventListener("mousemove", (e) => {
   const dx = locked ? e.movementX : e.clientX - lastPointer.x,
     dy = locked ? e.movementY : e.clientY - lastPointer.y;
   scene.yaw -= dx * 0.003;
-  scene.pitch = Math.max(0.2, Math.min(1.15, scene.pitch + dy * 0.003));
+  scene.pitch = Math.max(-1.35, Math.min(1.35, scene.pitch + dy * 0.003));
   lastPointer = { x: e.clientX, y: e.clientY };
 });
 scene.renderer.domElement.addEventListener(
   "wheel",
   (e) => {
-    if (state?.players[slot].role === "runner") {
+    if (state?.players[slot].role === "controller") {
       e.preventDefault();
-      scene.zoom = Math.max(3.5, Math.min(11, scene.zoom + e.deltaY * 0.005));
+      scene.zoom = Math.max(
+        0.75,
+        Math.min(1.6, scene.zoom + e.deltaY * 0.0006),
+      );
     }
   },
   { passive: false },
@@ -518,6 +619,7 @@ socket.on("connect", async () => {
     if (r.ok) {
       clearTimeout(toastTimer);
       document.querySelector("#notifications").innerHTML = "";
+      roomActive = true;
       slot = r.slot;
       token = r.token;
       lobby = r.lobby;
@@ -540,6 +642,7 @@ socket.on("disconnect", () => {
   toast("Connection lost. Reconnecting to your seat…");
 });
 socket.on("replaced", () => {
+  roomActive = false;
   sessionStorage.removeItem("mr-session");
   state = null;
   lobby = null;
@@ -548,6 +651,7 @@ socket.on("replaced", () => {
   toast("Your seat was opened in another tab. Reload to join again.");
 });
 socket.on("lobby", (data) => {
+  if (!roomActive || lobby?.code !== data.code) return;
   lobby = data;
   if (!data.started) {
     state = null;
@@ -556,11 +660,13 @@ socket.on("lobby", (data) => {
   }
 });
 socket.on("state", (data) => {
+  if (!roomActive || !lobby?.started || data.room !== lobby.code) return;
   const changed =
     !state ||
     state.round !== data.round ||
     state.players[slot]?.role !== data.players[slot]?.role;
   state = data;
+  music.setActive(state.phase !== "finished" && state.phase !== "paused");
   const own = state.players[slot];
   if (changed || !local || Math.hypot(local.x - own.x, local.z - own.z) > 2)
     local = { x: own.x, z: own.z, y: own.y };

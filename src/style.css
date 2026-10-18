@@ -1166,3 +1166,374 @@ h1 {
     bottom: auto;
   }
 }
+
+/* Quiet gameplay chrome: the world takes precedence over dashboard cards. */
+.game-top {
+  top: 22px;
+  left: 24px;
+  right: 24px;
+  height: 60px;
+  justify-content: flex-end;
+}
+.scoreboard {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  gap: 20px;
+  padding: 8px 20px;
+  background: #0b1722b8;
+  border-color: #ffffff12;
+  backdrop-filter: blur(14px);
+  border-radius: 40px;
+  box-shadow: none;
+}
+.score-team {
+  font-size: 8px;
+  letter-spacing: 1.6px;
+  min-width: 40px;
+}
+.score-team strong {
+  font-size: 25px;
+}
+.clock {
+  min-width: 74px;
+}
+.clock strong {
+  font-size: 27px;
+}
+.clock small {
+  font-size: 7px;
+  letter-spacing: 0.8px;
+}
+.game-tools {
+  gap: 6px;
+}
+.game-tools button {
+  font-size: 10px;
+  padding: 9px 11px;
+  background: #0b1722b8;
+  border-color: #ffffff18;
+  border-radius: 30px;
+}
+.role-card {
+  left: 26px;
+  top: 28px;
+  padding: 0;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  max-width: 180px;
+}
+.role-card small {
+  font-size: 8px;
+  letter-spacing: 2px;
+}
+.role-card strong {
+  font-family: "DM Sans", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  margin: 7px 0;
+}
+.role-card p {
+  display: none;
+}
+.objective {
+  top: auto;
+  bottom: 74px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  border-radius: 30px;
+  background: #0b1722b8;
+  border-color: #ffffff12;
+  backdrop-filter: blur(14px);
+  white-space: nowrap;
+}
+.objective small {
+  display: none;
+}
+.objective div {
+  margin: 0;
+  font-size: 10px;
+}
+.objective .compass {
+  font-family: "DM Sans", sans-serif;
+  font-size: 10px;
+  color: var(--gold);
+  border-left: 1px solid #ffffff25;
+  padding-left: 14px;
+}
+.game-bottom {
+  bottom: 22px;
+  left: 25px;
+  right: 25px;
+  align-items: center;
+}
+.controls-hint {
+  border: 0;
+  background: #0b172280;
+  border-radius: 20px;
+  padding: 9px 12px;
+  gap: 12px;
+  font-size: 9px;
+}
+.controls-hint kbd {
+  font-size: 9px;
+  border-color: #ffffff25;
+  padding: 2px 4px;
+}
+.energy-card {
+  width: 130px;
+  border: 0;
+  background: #0b172280;
+  border-radius: 15px;
+  padding: 10px 12px;
+}
+.energy-card .label {
+  font-size: 8px;
+  letter-spacing: 0.5px;
+}
+.energy-track {
+  height: 3px;
+  margin-top: 7px;
+}
+.device-marker {
+  width: 29px;
+  height: 29px;
+  border-radius: 9px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  background: #10232bd9;
+  border-color: #e6ce9180;
+  box-shadow: 0 2px 8px #0004;
+}
+.device-marker.gate,
+.device-marker.door {
+  color: #e8cf97;
+  border-color: #e8cf9770;
+}
+.device-marker:disabled {
+  opacity: 0.6;
+}
+.player-label {
+  font-size: 9px;
+  border: 0;
+  padding: 4px 7px;
+  background: #0b1722c0;
+}
+.tool-tabs {
+  display: flex;
+  gap: 5px;
+}
+.tool-tabs button {
+  padding: 10px 17px;
+  border: 0;
+  border-radius: 25px;
+  color: #adbfca;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 700;
+}
+.tool-tabs button.active {
+  color: #132128;
+  background: #e6c68c;
+}
+.tool-tabs button:hover {
+  color: #fff;
+}
+.tool-tabs button.active:hover {
+  color: #132128;
+}
+#ui[data-role="controller"] .objective {
+  top: 96px;
+  bottom: auto;
+  padding: 7px 13px;
+  background: #0b172280;
+}
+.event-feed {
+  bottom: 135px;
+  font-size: 10px;
+}
+.event-feed div {
+  background: #10222cc2;
+  border: 0;
+  border-radius: 20px;
+  padding: 8px 14px;
+}
+#ui[data-role="runner"] .event-feed {
+  top: 100px;
+  bottom: auto;
+}
+#door-prompt {
+  position: absolute;
+  bottom: 135px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  color: #fff;
+  text-shadow: 0 2px 6px #000;
+  white-space: nowrap;
+}
+#door-prompt kbd {
+  font:
+    700 12px "DM Sans",
+    sans-serif;
+  background: #e6c68c;
+  color: #17242a;
+  border-radius: 5px;
+  padding: 6px 10px;
+  margin-right: 8px;
+}
+.locked {
+  background: #17242ae6;
+  color: #ffcd8d;
+  padding: 10px 16px;
+  border-radius: 20px;
+}
+.look-hint {
+  bottom: 185px;
+  border: 0;
+  border-radius: 25px;
+  font-size: 10px;
+  background: #0b1722b8;
+  color: #d5dfdc;
+  padding: 9px 15px;
+}
+.reticle {
+  width: 4px;
+  height: 4px;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1px #0004;
+  background: #ffffffe0;
+}
+.center-message {
+  background: #0b1722de;
+  border-color: #ffffff14;
+  backdrop-filter: blur(15px);
+  border-radius: 24px;
+  box-shadow: none;
+}
+.center-message .big {
+  font-size: 64px;
+}
+.center-message h2 {
+  font-size: 30px;
+}
+.center-message p {
+  font-size: 11px;
+}
+.modal input[type="range"] {
+  padding: 0;
+  accent-color: var(--gold);
+  margin: 10px 0 30px;
+  cursor: pointer;
+}
+.modal #volume-number {
+  float: right;
+  color: var(--gold);
+}
+.modal .quality-select {
+  width: 100%;
+  max-width: none;
+  padding: 12px;
+  margin: 5px 0 10px;
+  font-size: 13px;
+}
+@media (max-width: 900px) {
+  .role-card {
+    left: 18px;
+    top: 25px;
+    max-width: 110px;
+  }
+  .role-card strong {
+    font-size: 10px;
+  }
+  .game-tools button {
+    padding: 8px;
+    font-size: 9px;
+  }
+  .scoreboard {
+    gap: 10px;
+    padding: 8px 14px;
+  }
+  .score-team {
+    min-width: 30px;
+    font-size: 7px;
+  }
+  .score-team strong {
+    font-size: 22px;
+  }
+  .clock strong {
+    font-size: 23px;
+  }
+  .objective {
+    bottom: 75px;
+  }
+  .game-bottom {
+    left: 15px;
+    right: 15px;
+  }
+  .tool-tabs button {
+    padding: 9px 12px;
+  }
+}
+@media (max-width: 600px) {
+  .game-top {
+    left: 12px;
+    right: 12px;
+  }
+  .role-card {
+    top: 90px;
+  }
+  .game-top .scoreboard {
+    left: 0;
+    transform: none;
+    gap: 5px;
+  }
+  .game-tools button {
+    font-size: 8px;
+    padding: 8px 7px;
+  }
+  .game-bottom {
+    flex-direction: row;
+  }
+  .controls-hint {
+    gap: 5px;
+    font-size: 7px;
+    flex-wrap: wrap;
+    max-width: 240px;
+  }
+  .controls-hint kbd {
+    font-size: 7px;
+  }
+  .energy-card {
+    width: 95px;
+  }
+  .objective {
+    font-size: 9px;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  .objective div,
+  .objective .compass {
+    font-size: 8px;
+  }
+  .tool-tabs button {
+    font-size: 9px;
+    padding: 7px;
+  }
+  .device-marker {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+  }
+}
