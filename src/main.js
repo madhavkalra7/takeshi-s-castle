@@ -1,4 +1,5 @@
 import { io } from "socket.io-client";
+import { SnapshotBuffer } from "./snapshots.js";
 import { Music } from "./music.js";
 import { ArenaScene } from "./scene.js";
 import {
@@ -44,6 +45,10 @@ let state = null,
   quality = localStorage.getItem("mr-quality") || "high",
   audio = null;
 const music = new Music();
+const snapshots = new SnapshotBuffer();
+let visualPoses = null,
+  clientWalls = [],
+  markerTime = 0;
 let roomActive = false;
 let selectedTool = "door",
   nearDoor = null;
@@ -112,7 +117,7 @@ function closeModal() {
 }
 function instructions() {
   modal(
-    `<h2>Friends. Rivals. Chaos.</h2><p>Four players. Two teams. The first team to win three rounds takes the arena.</p><div class="instruction"><span class="num">01</span><div><strong>RUN THE MAZE</strong><p>Grab your team-coloured key, then race to the north EXIT. WASD to move, mouse to look, Space to jump, E to open doors, F to shove nearby rivals.</p></div></div><div class="instruction"><span class="num">02</span><div><strong>CONTROL THE CHAOS</strong><p>Click labelled devices to rotate walls (30 energy), close gates for 3 seconds (35), or fire bumpers (40). Energy regenerates. Devices have shared cooldowns.</p></div></div><div class="instruction"><span class="num">03</span><div><strong>PLAY AS A TEAM</strong><p>Talk using your favourite voice app. Controllers see opponents only near their runner. All traps affect both teams! Roles swap every round.</p></div></div><p>Traps flash before firing. Walls and gates refuse to close through a runner and refund the energy. Jump over an active bumper to avoid its hit.</p><button id="got-it" class="primary">LET’S GO →</button>`,
+    `<h2>Friends. Rivals. Chaos.</h2><p>Four players. Two teams. The first team to win three rounds takes the arena.</p><div class="instruction"><span class="num">01</span><div><strong>RUN THE MAZE</strong><p>Grab your team-coloured key, then race to the north EXIT. WASD to move, mouse to look, Space to jump, E to open doors, F to shove nearby rivals.</p></div></div><div class="instruction"><span class="num">02</span><div><strong>CONTROL THE CHAOS</strong><p>Click labelled devices to rotate walls (30 energy), close gates for 3 seconds (35), or fire bumpers (40). Energy regenerates. Devices have shared cooldowns.</p></div></div><div class="instruction"><span class="num">03</span><div><strong>PLAY AS A TEAM</strong><p>Talk using your favourite voice app. Controllers can track both runners across the entire maze. All traps affect both teams! Roles swap every round.</p></div></div><p>Traps flash before firing. Walls and gates refuse to close through a runner and refund the energy. Jump over an active bumper to avoid its hit.</p><button id="got-it" class="primary">LET’S GO →</button>`,
   );
   button("got-it", closeModal);
 }
@@ -255,6 +260,8 @@ async function copyInvite() {
   }
 }
 function leaveRoom() {
+  snapshots.clear();
+  visualPoses = null;
   roomActive = false;
   socket.emit("leave");
   sessionStorage.removeItem("mr-session");
@@ -419,10 +426,11 @@ function updateHUD() {
 function positionOverlays() {
   if (!state) return;
   const own = state.players[slot],
-    runner = state.players.find(
+    runner = (visualPoses?.players || state.players).find(
       (p) => p.role === "runner" && p.team === own.team,
     );
-  if (own.role === "controller") {
+  if (own.role === "controller" && performance.now() - markerTime > 50) {
+    markerTime = performance.now();
     const candidates = devices
       .filter((d) =>
         selectedTool === "door"
@@ -464,13 +472,15 @@ function positionOverlays() {
       b.title = `${d.type === "door" ? "Lock door" : d.type} · ${COST[d.type]} energy`;
     }
   }
-  for (const p of state.players.filter((p) => p.role === "runner")) {
+  for (const p of (visualPoses?.players || state.players).filter(
+    (p) => p.role === "runner",
+  )) {
     const label = document.getElementById(`label-${p.slot}`);
     if (!label) continue;
     const projected =
       own.role === "runner" || p.hidden
         ? { visible: false }
-        : scene.project(p.x, (p.y || 0) + 2.1, p.z);
+        : scene.project(p.x, (p.y || 0) + 2.55, p.z);
     label.style.display = projected.visible ? "" : "none";
     label.style.left = `${projected.x}px`;
     label.style.top = `${projected.y}px`;
@@ -665,6 +675,9 @@ socket.on("state", (data) => {
     !state ||
     state.round !== data.round ||
     state.players[slot]?.role !== data.players[slot]?.role;
+  if (changed) snapshots.clear();
+  snapshots.push(data, performance.now());
+  clientWalls = obstacles(data, data.serverTime);
   state = data;
   music.setActive(state.phase !== "finished" && state.phase !== "paused");
   const own = state.players[slot];
@@ -685,11 +698,9 @@ function inputVector() {
   };
 }
 function animate(time) {
-  if (quality === "low" && time - lastFrame < 1000 / 30) {
-    requestAnimationFrame(animate);
-    return;
-  }
-  const dt = Math.min(0.05, (time - lastFrame) / 1000);
+  const frameTime = (time - lastFrame) / 1000;
+  const dt = Math.min(0.05, frameTime);
+  visualPoses = snapshots.sample(time);
   lastFrame = time;
   if (state && local) {
     const own = state.players[slot],
@@ -702,13 +713,14 @@ function animate(time) {
           local,
           (input.x / n) * 5.4 * dt,
           (input.z / n) * 5.4 * dt,
-          obstacles(state, state.serverTime),
+          clientWalls,
         );
       }
       const correction = 1 - Math.exp(-dt * 8);
       local.x += (own.x - local.x) * correction;
       local.z += (own.z - local.z) * correction;
-      local.y = own.y;
+      local.y += (own.y - local.y) * (1 - Math.exp(-dt * 24));
+      if (own.y === 0 && local.y < 0.015) local.y = 0;
       if (time - sendAt > 33) {
         socket.emit("input", {
           x: active ? input.x : 0,
@@ -722,7 +734,7 @@ function animate(time) {
       }
     }
   }
-  scene.render(dt, state, slot, local, quality);
+  scene.render(dt, state, slot, local, quality, visualPoses, frameTime);
   positionOverlays();
   requestAnimationFrame(animate);
 }

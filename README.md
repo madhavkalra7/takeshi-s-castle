@@ -28,7 +28,7 @@ For friends on your local network, use your computer's LAN IP instead of localho
 - Each round lasts **180 seconds**. A timeout or simultaneous finish is a draw.
 - Teammates **swap roles after every round**. First to **three points** wins.
 - Both teams share the same devices. Traps affect either runner.
-- Controllers see the opposing runner only within **6.8 metres** of their teammate.
+- Controllers see **both runners across the whole maze**, with team-coloured markers and silhouettes that stay visible over room walls. First-person runners see opponents normally when they are in view; solid walls and closed doors still occlude them.
 - Use an external voice call to coordinate; voice chat is not built in.
 
 | Role          | Controls                                                                                     |
@@ -76,9 +76,10 @@ npm test
 npm run build
 npx playwright install chromium
 npm run test:browser
+npm run test:graphics
 ```
 
-`npm test` covers simulation behaviour and actual Socket.IO room connections: every rotating-wall configuration, key/exit reachability, collision tunnelling, movement normalization, device permissions/energy/cooldowns, activation safety, jumps, scoring/draws, role swaps, match completion, hidden opponent positions, bot navigation, room capacity, seat changes, host migration, reconnection, and malformed requests.
+`npm test` covers simulation behaviour and actual Socket.IO room connections: every rotating-wall configuration, key/exit reachability, collision tunnelling, movement normalization, device permissions/energy/cooldowns, activation safety, jumps, scoring/draws, role swaps, match completion, full-map controller visibility, bot navigation, room capacity, seat changes, host migration, reconnection, and malformed requests.
 
 Browser checks use four independent player sessions and cover responsive menus, joining, live roles, controller actions, movement, UI settings, recovery on reload, bot scoring, and role swaps. Screenshots are written to `test-results/`. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use an existing Chromium binary. GitHub Actions runs build, simulation/network tests, and browser checks.
 
@@ -88,9 +89,12 @@ Browser checks use four independent player sessions and cover responsive menus, 
 - `server/index.js` — rooms, authoritative ticking, reconnects, permissions, serving.
 - `src/scene.js` — procedural stadium, characters, camera, lighting, animation.
 - `src/main.js` — menus, HUD, input, prediction, audio, socket client.
+- `src/snapshots.js` — buffered interpolation for remote positions, jumps and headings. Local first-person movement stays responsive.
 - `src/music.js` — original procedural ambient soundtrack, percussion, mute and volume controls. Music starts after user interaction, pauses when the page is hidden, and resumes with the match.
 - `src/style.css` — interface and responsive layout.
 
-The 11×11 maze has 121 rooms, 113 sliding room doors, narrow doorways, dead ends, and branching routes. Doors open for 5.5 seconds after a nearby runner presses E. They stay open while a runner occupies the frame. Controllers can temporarily lock them, but cannot lock through a runner. The arena is symmetric, including gates and key routes. Floor tiles and stadium seats use GPU instancing. The runner camera is first-person at eye height; your own character is hidden. The controller gets an overhead view with category tabs and at most six nearby door markers. Static architecture is batched by material to reduce draw calls. Settings contains music volume and graphics controls. Low graphics disables shadows and reduces pixel density. All art is original procedural geometry.
+The 11×11 maze has 121 rooms, 113 sliding room doors, narrow doorways, dead ends, and branching routes. Doors open for 5.5 seconds after a nearby runner presses E. They stay open while a runner occupies the frame. Controllers can temporarily lock them, but cannot lock through a runner. The arena is symmetric, including gates and key routes. Floor tiles and stadium seats use GPU instancing. The runner camera is first-person at eye height; your own character is hidden. The controller gets an overhead view with category tabs and at most six nearby door markers. Static architecture is batched by material to reduce draw calls. Settings contains music volume and graphics controls. Door leaves and repeated lights are batched into shared GPU draws. Shadows refresh at 10 Hz while character motion renders at the display refresh rate. Resolution adapts to sustained frame times, and Low graphics disables shadows without imposing a 30 FPS cap. All art is original procedural geometry.
 
 This is a tested first playable release. Internet latency, device/browser differences, and long-session behaviour still need real-player playtesting; automated checks cannot guarantee zero bugs.
+
+Graphics checks validate both controller characters, first-person opponent visibility, wall occlusion, 3D door picking, and adaptive resolution. The controlled overhead scene went from 490 to 122 main-pass draw calls; actual frame rate depends on hardware.

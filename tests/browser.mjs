@@ -112,6 +112,8 @@ try {
   );
   log("Match live");
   const controller = pages[1];
+  await controller.locator("#label-0").waitFor({ state: "visible" });
+  await controller.locator("#label-2").waitFor({ state: "visible" });
   await controller.screenshot({ path: "test-results/controller.png" });
   assert.ok((await controller.locator(".device-marker").count()) > 100);
   assert.ok((await controller.locator(".device-marker:visible").count()) <= 6);

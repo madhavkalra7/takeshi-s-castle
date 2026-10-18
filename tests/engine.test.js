@@ -174,13 +174,16 @@ test("roles swap, rounds reset, and first to three ends the match", () => {
   assert.equal(g.winner, 0);
   assert.deepEqual(g.scores, [3, 0]);
 });
-test("controller snapshots conceal distant opponent locations", () => {
-  const g = playing(),
-    view = publicGame(g, 1, 4);
-  assert.equal(view.players[2].hidden, true);
-  assert.equal(view.players[2].x, null);
-  Object.assign(g.players[2], { x: g.players[0].x + 2, z: g.players[0].z });
-  assert.equal(publicGame(g, 1, 4).players[2].hidden, false);
+test("both teams receive both runner positions at any distance", () => {
+  const g = playing();
+  for (const slot of [0, 1, 2, 3]) {
+    const view = publicGame(g, slot, 4);
+    for (const id of [0, 2]) {
+      assert.equal(view.players[id].hidden, false);
+      assert.equal(view.players[id].x, g.players[id].x);
+      assert.equal(view.players[id].z, g.players[id].z);
+    }
+  }
 });
 test("practice bots complete a full match without getting stuck", () => {
   const m = members().map((p) => ({ ...p, bot: true })),

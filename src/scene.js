@@ -17,6 +17,12 @@ export class ArenaScene {
     });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.7));
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.autoUpdate = false;
+    this.lastShadow = -1;
+    this.quality = null;
+    this.renderScale = 1;
+    this.frameAverage = 1 / 60;
+    this.budgetTime = 0;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -26,7 +32,7 @@ export class ArenaScene {
     const sun = new THREE.DirectionalLight(0xffedd8, 3);
     sun.position.set(15, 35, 12);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(1024, 1024);
     Object.assign(sun.shadow.camera, {
       left: -27,
       right: 27,
@@ -305,12 +311,32 @@ export class ArenaScene {
         }
       });
     }
+    const doorLightMaterial = new THREE.MeshBasicMaterial({ color: 0xffd59a });
+    const stadiumLights = [
+      new THREE.MeshBasicMaterial({ color: 0xffcb76 }),
+      new THREE.MeshBasicMaterial({ color: 0x6ce8ed }),
+    ];
+    const floodLightMaterial = new THREE.MeshBasicMaterial({ color: 0xfff3da });
     const doorMaterial = mat(0xffffff, {
       map: this.surfaceTexture("door"),
       metalness: 0.3,
       roughness: 0.45,
     });
     const doorTrim = mat(0xd8b985, { metalness: 0.55, roughness: 0.4 });
+    this.doorPanels = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.85, 2.65, 0.18),
+      doorMaterial,
+      ARENA.doors.length * 2,
+    );
+    this.doorPanels.castShadow = true;
+    this.doorPanels.receiveShadow = true;
+    this.doorPanels.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.doorPanels.boundingSphere = new THREE.Sphere(
+      new THREE.Vector3(),
+      Math.hypot(HALF, HALF) + 4,
+    );
+    this.world.add(this.doorPanels);
+    let doorIndex = 0;
     for (const d of ARENA.doors) {
       const alongX = d.w > d.d,
         group = new THREE.Group();
@@ -328,6 +354,8 @@ export class ArenaScene {
           doorMaterial,
           group,
         );
+        panel.visible = false;
+        panel.castShadow = false;
         panels.push(panel);
         this.box(
           0.14,
@@ -356,9 +384,10 @@ export class ArenaScene {
         d.x,
         2.76,
         d.z,
-        new THREE.MeshBasicMaterial({ color: 0xffd59a }),
+        doorLightMaterial,
       );
       this.devices.set(d.id, { group, panels, alongX, type: "door", slide: 0 });
+      this.writeDoorPanels(this.devices.get(d.id));
       group.traverse((o) => {
         if (o.isMesh) {
           o.userData.device = d.id;
@@ -477,7 +506,7 @@ export class ArenaScene {
             x + (i - 1.5) * 0.6,
             12.5,
             z + 0.3,
-            new THREE.MeshBasicMaterial({ color: 0xfff3da }),
+            floodLightMaterial,
           );
       }
     const board = this.text("MAZE / RIOT", 13, 2.4, "#ffdc80");
@@ -499,7 +528,7 @@ export class ArenaScene {
         Math.cos(a) * r,
         2 + Math.sin(i * 4) * 2,
         Math.sin(a) * r,
-        new THREE.MeshBasicMaterial({ color: i % 2 ? 0xffcb76 : 0x6ce8ed }),
+        stadiumLights[i % 2],
       );
     }
     const batches = new Map();
@@ -569,6 +598,84 @@ export class ArenaScene {
     this.world.add(g);
     return g;
   }
+  writeDoorPanels(obj) {
+    const matrix = new THREE.Matrix4();
+    for (let i = 0; i < 2; i++) {
+      const offset = (i === 0 ? -1 : 1) * (0.425 + obj.slide * 0.85);
+      matrix.makeRotationY(obj.alongX ? 0 : Math.PI / 2);
+      matrix.setPosition(
+        obj.x + (obj.alongX ? offset : 0),
+        1.325,
+        obj.z + (obj.alongX ? 0 : offset),
+      );
+      this.doorPanels.setMatrixAt(obj.panelIndex + i, matrix);
+    }
+    this.doorPanels.instanceMatrix.needsUpdate = true;
+  }
+  setActorView(actor, slot, spectator) {
+    if (actor.userData.spectator === spectator) return;
+    actor.userData.actorSlot = slot;
+    actor.userData.spectator = spectator;
+    actor.scale.setScalar(spectator ? 1.25 : 1);
+    actor.traverse((o) => {
+      if (!o.isMesh || o.userData.marker) return;
+      o.userData.normalMaterial ||= o.material;
+      if (!o.userData.overviewMaterial) {
+        o.userData.overviewMaterial = o.material.clone();
+        o.userData.overviewMaterial.depthTest = false;
+        o.userData.overviewMaterial.depthWrite = false;
+      }
+      o.material = spectator
+        ? o.userData.overviewMaterial
+        : o.userData.normalMaterial;
+      o.renderOrder = spectator ? 20 : 0;
+    });
+    if (!actor.userData.ring) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.48, 0.6, 24),
+        new THREE.MeshBasicMaterial({
+          color: COLORS[Math.floor(slot / 2)],
+          side: THREE.DoubleSide,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.04;
+      ring.renderOrder = 19;
+      ring.userData.marker = true;
+      actor.add(ring);
+      actor.userData.ring = ring;
+    }
+    actor.userData.ring.visible = spectator;
+  }
+  updateQuality(quality, frameTime) {
+    const cap = quality === "low" ? 1 : Math.min(devicePixelRatio, 1.5);
+    const switched = this.quality !== quality;
+    if (switched) {
+      this.quality = quality;
+      this.renderScale = cap;
+      this.frameAverage = 1 / 60;
+      this.budgetTime = 0;
+      this.renderer.shadowMap.enabled = quality !== "low";
+    }
+    const sample = Math.min(0.1, Math.max(0.005, frameTime));
+    this.frameAverage += (sample - this.frameAverage) * 0.04;
+    this.budgetTime += sample;
+    let next = this.renderScale;
+    if (this.budgetTime > 2) {
+      this.budgetTime = 0;
+      if (this.frameAverage > 1 / 43)
+        next = Math.max(quality === "low" ? 0.65 : 0.8, next - 0.15);
+      else if (this.frameAverage < 1 / 57) next = Math.min(cap, next + 0.1);
+    }
+    if (switched || Math.abs(next - this.renderScale) > 0.01) {
+      this.renderScale = next;
+      this.renderer.setPixelRatio(next);
+      this.resize();
+      this.renderer.shadowMap.needsUpdate = true;
+    }
+  }
   resize() {
     const w = this.container.clientWidth,
       h = this.container.clientHeight;
@@ -603,7 +710,8 @@ export class ArenaScene {
     return this.raycaster.intersectObjects(this.pickables, false)[0]?.object
       .userData.device;
   }
-  render(dt, state, slot, local, quality) {
+  render(dt, state, slot, local, quality, poses = null, frameTime = dt) {
+    this.updateQuality(quality, frameTime);
     this.elapsed += dt;
     const t = this.elapsed,
       own = state?.players[slot],
@@ -631,33 +739,39 @@ export class ArenaScene {
       for (const [id, a] of this.avatars) {
         a.visible = false;
       }
-      for (const p of state.players.filter((p) => p.role === "runner")) {
+      for (const p of (poses?.players || state.players).filter(
+        (p) => p.role === "runner",
+      )) {
         let a = this.avatars.get(p.slot + 10);
         if (!a) {
           a = this.avatar(p.team);
           this.avatars.set(p.slot + 10, a);
         }
+        this.setActorView(a, p.slot, own.role === "controller");
         a.visible = !p.hidden && !(own.role === "runner" && p.slot === slot);
         if (p.hidden) continue;
         const target = p.slot === slot && local ? local : p;
         const desired = new THREE.Vector3(target.x, target.y || 0, target.z);
-        if (a.position.distanceTo(desired) > 5) a.position.copy(desired);
-        else a.position.lerp(desired, 1 - Math.exp(-dt * 18));
+        a.position.copy(desired);
         const diff = Math.atan2(
           Math.sin(p.yaw - a.rotation.y),
           Math.cos(p.yaw - a.rotation.y),
         );
-        a.rotation.y += diff * Math.min(1, dt * 16);
+        a.rotation.y += diff * Math.min(1, dt * 24);
         a.rotation.z = p.stun > time ? Math.sin(t * 25) * 0.35 : 0;
         const speed = a.userData.last
           ? a.position.distanceTo(a.userData.last) / Math.max(dt, 0.001)
           : 0;
         a.userData.last = a.position.clone();
-        a.userData.limbs.forEach(
-          (l, i) =>
-            (l.rotation.x =
-              speed > 0.4 ? Math.sin(t * 13 + (i % 2) * Math.PI) * 0.55 : 0),
-        );
+        a.userData.stride =
+          (a.userData.stride || 0) + Math.min(speed, 7) * dt * 2.6;
+        a.userData.limbs.forEach((l, i) => {
+          const angle =
+            speed > 0.3
+              ? Math.sin(a.userData.stride + (i % 2) * Math.PI) * 0.55
+              : 0;
+          l.rotation.x += (angle - l.rotation.x) * (1 - Math.exp(-dt * 16));
+        });
       }
       if (own.role === "runner") {
         const p = local || own;
@@ -682,7 +796,11 @@ export class ArenaScene {
     for (const d of ARENA.doors) {
       const obj = this.devices.get(d.id),
         open = state ? doorIsOpen(state, d.id, time) : false;
+      const previousSlide = obj.slide;
       obj.slide += ((open ? 1 : 0) - obj.slide) * Math.min(1, dt * 15);
+      if (Math.abs((open ? 1 : 0) - obj.slide) < 0.001)
+        obj.slide = open ? 1 : 0;
+      if (previousSlide !== obj.slide) this.writeDoorPanels(obj);
       obj.panels.forEach((panel, i) => {
         const offset = (i === 0 ? -1 : 1) * (0.425 + obj.slide * 0.85);
         panel.position[obj.alongX ? "x" : "z"] = offset;
@@ -716,15 +834,11 @@ export class ArenaScene {
         (p) => p.team === i && p.role === "runner" && p.key,
       );
     });
-    if (quality === "low" && this.renderer.shadowMap.enabled) {
-      this.renderer.shadowMap.enabled = false;
-      this.renderer.setPixelRatio(1);
-      this.resize();
-    }
-    if (quality === "high" && !this.renderer.shadowMap.enabled) {
-      this.renderer.shadowMap.enabled = true;
-      this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.7));
-      this.resize();
+    // Reuse the shadow map between updates; character/camera motion still renders
+    // at the display refresh rate. Shadows refresh at 10 Hz instead of every frame.
+    if (this.elapsed - this.lastShadow >= 0.1) {
+      this.renderer.shadowMap.needsUpdate = true;
+      this.lastShadow = this.elapsed;
     }
     this.renderer.render(this.scene, this.camera);
   }

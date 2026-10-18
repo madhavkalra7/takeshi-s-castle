@@ -581,10 +581,6 @@ function botInput(p, game, walls, now) {
   };
 }
 export function publicGame(game, slot, now) {
-  const self = game.players[slot],
-    ally = game.players.find(
-      (p) => p.team === self.team && p.role === "runner",
-    );
   return {
     phase: game.phase,
     phaseUntil: game.phaseUntil,
@@ -598,21 +594,16 @@ export function publicGame(game, slot, now) {
     roundWinner: game.roundWinner,
     serverTime: now,
     players: game.players.map((p) => {
-      const hidden =
-        self.role === "controller" &&
-        p.role === "runner" &&
-        p.team !== self.team &&
-        Math.hypot(p.x - ally.x, p.z - ally.z) > 6.8;
       return {
         slot: p.slot,
         team: p.team,
         role: p.role,
         name: p.name,
         bot: p.bot,
-        hidden,
-        x: hidden ? null : p.x,
-        z: hidden ? null : p.z,
-        y: hidden ? 0 : p.y,
+        hidden: false,
+        x: p.x,
+        z: p.z,
+        y: p.y,
         yaw: p.yaw,
         key: p.key,
         stun: p.stun,

@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Graphics test harness</title>
+    <style>
+      body {
+        margin: 0;
+      }
+      #arena {
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="arena"></div>
+    <script type="module">
+      import { Vector2, Raycaster } from "three";
+      import { ArenaScene } from "/src/scene.js";
+      import { createGame, publicGame, ARENA, CELL } from "/shared/game.js";
+      const game = createGame(
+        [0, 1, 2, 3].map((i) => ({ name: "Player " + i })),
+        0,
+      );
+      game.phase = "playing";
+      const scene = new ArenaScene(document.querySelector("#arena"));
+      window.harness = {
+        ARENA,
+        CELL,
+        Vector2,
+        Raycaster,
+        scene,
+        game,
+        render(slot = 1, quality = "high") {
+          const state = publicGame(game, slot, 1);
+          scene.render(1 / 60, state, slot, state.players[slot], quality);
+          return scene.renderer.info.render.calls;
+        },
+      };
+    </script>
+  </body>
+</html>
