@@ -13,6 +13,8 @@ npm ci
 npm run dev
 ```
 
+Frontend changes reload automatically through Vite. After editing `server/` or `shared/game.js`, stop and restart `npm run dev`. The Node process deliberately runs without watch mode so Vite’s generated config files cannot trigger a restart loop.
+
 Open **http://localhost:3000**. Create a room and share its six-character code. Four friends can pick seats in the lobby. The host can fill empty seats with bots, or choose solo practice from the home screen.
 
 For friends on your local network, use your computer's LAN IP instead of localhost. For internet play, deploy the Node server below; a localhost invite cannot be opened on someone else's computer.
