@@ -1,5 +1,6 @@
 import { chromium } from "@playwright/test";
 import { spawn } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 const server = spawn(process.execPath, ["server/index.js"], {
   env: { ...process.env, PORT: "3293", NODE_ENV: "development" },
@@ -35,6 +36,14 @@ try {
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("http://127.0.0.1:3293/tests/graphics-harness.html");
   await page.waitForFunction(() => window.harness);
+  const loaded = await page.evaluate(
+    async () => !!(await window.harness.scene.characterReady),
+  );
+  assert.equal(
+    loaded,
+    true,
+    "uploaded GLB and embedded textures load successfully",
+  );
   const baseline = await page.evaluate(() => {
     const h = window.harness,
       calls = [];
@@ -50,6 +59,50 @@ try {
       baseline.visible,
       2,
       "controller sees both characters at opposite spawn points",
+    );
+    const models = await page.evaluate(() => {
+      const { scene } = window.harness;
+      const actors = [...scene.avatars.values()];
+      return {
+        count: actors.filter((a) => a.userData.character).length,
+        independent:
+          actors[0].userData.character !== actors[1].userData.character,
+        fallbackRemoved: actors.every(
+          (a) => !a.children.includes(a.userData.fallback),
+        ),
+        textured: actors.every((a) => {
+          let textured = false;
+          a.userData.character.traverse((o) => {
+            if (o.isMesh && o.material.map?.image?.width === 1024)
+              textured = true;
+          });
+          return textured;
+        }),
+        overview: actors.every((a) => {
+          let valid = true;
+          a.userData.character.traverse((o) => {
+            if (o.isMesh && o.material.depthTest) valid = false;
+          });
+          return valid;
+        }),
+      };
+    });
+    assert.equal(models.count, 2, "both runners use the uploaded character");
+    assert.equal(
+      models.independent,
+      true,
+      "runners have independent model transforms",
+    );
+    assert.equal(models.fallbackRemoved, true);
+    assert.equal(
+      models.textured,
+      true,
+      "embedded character textures are preserved",
+    );
+    assert.equal(
+      models.overview,
+      true,
+      "spectators see both character meshes above maze walls",
     );
     const result = await page.evaluate(async () => {
       const { Vector2, Raycaster } = window.harness;
@@ -110,9 +163,14 @@ try {
         visibleEnemy,
         frontSlot,
         blockedByWall: !blocker,
-        normalDepth: enemy.children
-          .filter((o) => o.isMesh && !o.userData.marker)
-          .every((o) => o.material.depthTest),
+        normalDepth: (() => {
+          let valid = true;
+          enemy.traverse((o) => {
+            if (o.isMesh && !o.userData.marker && !o.material.depthTest)
+              valid = false;
+          });
+          return valid;
+        })(),
       };
     });
     assert.equal(result.hiddenSelf, true);
@@ -124,6 +182,24 @@ try {
       "FPP cannot see opponents through closed room walls",
     );
     assert.equal(result.normalDepth, true);
+    await page.evaluate(() => {
+      const h = window.harness;
+      Object.assign(h.game.players[0], { x: 0, z: 0, y: 0 });
+      Object.assign(h.game.players[2], { x: 0, z: -1.4, y: 0, yaw: 0 });
+      h.scene.yaw = 0;
+      h.scene.pitch = 0;
+      for (let i = 0; i < 30; i++) h.render(0);
+    });
+    await mkdir("test-results", { recursive: true });
+    const fppImage = await page.evaluate(() => {
+      const h = window.harness;
+      h.render(0);
+      return h.scene.renderer.domElement.toDataURL("image/png").split(",")[1];
+    });
+    await writeFile(
+      "test-results/character-fpp.png",
+      Buffer.from(fppImage, "base64"),
+    );
     const doors = await page.evaluate(() => {
       const h = window.harness,
         { scene, game, Raycaster, Vector2 } = h;
@@ -230,6 +306,40 @@ try {
     assert.ok(quality.slowed >= 0.8);
     assert.equal(quality.lowRatio, 1);
     assert.equal(quality.shadows, false);
+    const overviewImage = await page.evaluate(() => {
+      const h = window.harness;
+      h.render(1);
+      return h.scene.renderer.domElement.toDataURL("image/png").split(",")[1];
+    });
+    await writeFile(
+      "test-results/character-overview.png",
+      Buffer.from(overviewImage, "base64"),
+    );
+    const fallbackPage = await browser.newPage();
+    await fallbackPage.route("**/models/community-character.glb", (route) =>
+      route.abort(),
+    );
+    await fallbackPage.goto(
+      "http://127.0.0.1:3293/tests/graphics-harness.html",
+    );
+    await fallbackPage.waitForFunction(() => window.harness);
+    const fallback = await fallbackPage.evaluate(async () => {
+      const h = window.harness;
+      const loaded = await h.scene.characterReady;
+      h.render();
+      return (
+        loaded === null &&
+        [...h.scene.avatars.values()].every(
+          (a) => a.visible && a.children.includes(a.userData.fallback),
+        )
+      );
+    });
+    assert.equal(
+      fallback,
+      true,
+      "a failed asset download preserves playable fallback characters",
+    );
+    await fallbackPage.close();
     assert.deepEqual(errors, []);
     console.log(
       "PASS: both controller characters, first-person opponent rendering, wall occlusion, and graphics initialization.",

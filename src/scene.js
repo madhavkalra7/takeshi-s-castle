@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { ARENA, CELL, HALF, SIZE, MID, doorIsOpen } from "../shared/game.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 export const COLORS = [0x45e0df, 0xff855b];
@@ -74,6 +75,37 @@ export class ArenaScene {
     this.pointer = new THREE.Vector2();
     this.raycaster = new THREE.Raycaster();
     this.build();
+    // Load once; avatars share geometry and textures, with independent transforms.
+    this.characterReady = new GLTFLoader()
+      .loadAsync(`${import.meta.env.BASE_URL}models/community-character.glb`)
+      .then(({ scene }) => {
+        scene.rotation.y = -Math.PI / 2;
+        scene.updateMatrixWorld(true);
+        const bounds = new THREE.Box3().setFromObject(scene);
+        const scale = 1.8 / (bounds.max.y - bounds.min.y);
+        scene.scale.setScalar(scale);
+        scene.position.set(
+          (-(bounds.min.x + bounds.max.x) * scale) / 2,
+          -bounds.min.y * scale,
+          (-(bounds.min.z + bounds.max.z) * scale) / 2,
+        );
+        scene.traverse((o) => {
+          if (o.isMesh) {
+            o.castShadow = true;
+            o.receiveShadow = true;
+          }
+        });
+        this.characterTemplate = scene;
+        for (const actor of this.avatars.values()) this.attachCharacter(actor);
+        return scene;
+      })
+      .catch((error) => {
+        console.warn(
+          "Character could not load; using the fallback avatar.",
+          error,
+        );
+        return null;
+      });
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
     this.resize();
@@ -566,7 +598,35 @@ export class ArenaScene {
         });
       }
   }
+  attachCharacter(actor) {
+    if (!this.characterTemplate || actor.userData.character) return;
+    const model = this.characterTemplate.clone(true);
+    actor.remove(actor.userData.fallback);
+    actor.add(model);
+    actor.userData.character = model;
+    actor.userData.limbs = [];
+    // Reapply overview materials to the newly attached mesh on the next frame.
+    actor.userData.spectator = undefined;
+    this.renderer.shadowMap.needsUpdate = true;
+  }
   avatar(team) {
+    const actor = new THREE.Group();
+    const fallback = this.fallbackAvatar(team);
+    actor.userData.fallback = fallback;
+    actor.userData.limbs = fallback.userData.limbs;
+    actor.add(fallback);
+    // A small team beacon keeps identical character skins distinguishable.
+    const beacon = new THREE.Mesh(
+      new THREE.SphereGeometry(0.085, 8, 6),
+      new THREE.MeshBasicMaterial({ color: COLORS[team] }),
+    );
+    beacon.position.set(0, 2.02, 0);
+    actor.add(beacon);
+    this.attachCharacter(actor);
+    this.world.add(actor);
+    return actor;
+  }
+  fallbackAvatar(team) {
     const g = new THREE.Group(),
       m = this.materials,
       color = mat(COLORS[team]);
@@ -604,7 +664,6 @@ export class ArenaScene {
     g.traverse((o) => {
       if (o.isMesh) o.castShadow = true;
     });
-    this.world.add(g);
     return g;
   }
   writeDoorPanels(obj) {
@@ -774,6 +833,14 @@ export class ArenaScene {
         a.userData.last = a.position.clone();
         a.userData.stride =
           (a.userData.stride || 0) + Math.min(speed, 7) * dt * 2.6;
+        if (a.userData.character) {
+          const model = a.userData.character;
+          const moving = speed > 0.3;
+          model.position.y =
+            this.characterTemplate.position.y +
+            (moving ? Math.abs(Math.sin(a.userData.stride)) * 0.045 : 0);
+          model.rotation.z = moving ? Math.sin(a.userData.stride) * 0.025 : 0;
+        }
         a.userData.limbs.forEach((l, i) => {
           const angle =
             speed > 0.3
